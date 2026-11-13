@@ -1,0 +1,10 @@
+{
+  "name": "Luna - AI Voice Assistant",
+  "description": "A cute, friendly, and caring Bengali AI voice assistant companion.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

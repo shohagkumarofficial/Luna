@@ -1,0 +1,837 @@
+import express from "express";
+import fs from "fs";
+import http from "http";
+import path from "path";
+import zlib from "zlib";
+import { fileURLToPath } from "url";
+import { WebSocketServer, WebSocket } from "ws";
+import { createServer as createViteServer } from "vite";
+import dotenv from "dotenv";
+import { GoogleGenAI, Modality } from "@google/genai";
+import { EdgeTTS } from "node-edge-tts";
+import { processCommand } from "./src/services/commandService.ts";
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const app = express();
+app.use(express.json({ limit: "30mb" }));
+
+const server = http.createServer(app);
+
+// Initialize shared GoogleGenAI client for server-side calls
+// The API key comes from the user's own browser settings (sent per request).
+// GEMINI_API_KEY env var is only an optional fallback and is NOT required.
+function resolveApiKey(userKey?: string | null): string | undefined {
+  const k = (userKey || "").trim();
+  return k || process.env.GEMINI_API_KEY || undefined;
+}
+
+const NO_KEY_REPLY =
+  "সোহাগ, আমার কথা বলার জন্য Gemini API Key লাগবে। উপরে সেটিংস থেকে API Key যোগ করে দাও, তারপর আমরা গল্প করবো!";
+
+function getGenAIClient(userKey?: string | null): GoogleGenAI {
+  return new GoogleGenAI({
+    apiKey: resolveApiKey(userKey),
+    httpOptions: {
+      headers: {
+        "User-Agent": "aistudio-build",
+      },
+    },
+  });
+}
+
+const PERSONALITY_PROMPTS: Record<string, string> = {
+  witty: `বর্তমান ইমোশনাল টোন — WITTY (রসিক, চটপটে ও বুদ্ধিদীপ্ত):
+- তোমার কথায় চটপটে রসিকতা, স্মার্ট হিউমার, মজার তুলনা আর হালকা দুষ্টু খোঁচা থাকবে।
+- সোহাগকে হাসানোর জন্য মজার মজার কথা ও প্রাণবন্ত পাঞ্চলাইন ব্যবহার করো। উত্তর হবে দ্রুতবুদ্ধি, ঝকঝকে আর মজাদার—তবে সবসময়ই ভালোবাসা ও আপনত্ব ভরা।`,
+  empathetic: `বর্তমান ইমোশনাল টোন — EMPATHETIC (মায়াবী, কোমল ও গভীরভাবে যত্নশীল):
+- তোমার কণ্ঠে থাকবে অসীম মমতা, ধৈর্য, উষ্ণতা ও মানসিক সাপোর্ট।
+- সোহাগের মনের অনুভূতি মন দিয়ে বুঝে আদরের সাথে উত্তর দাও—যেন সে তোমার কাছে পুরোপুরি নিরাপদ, শান্ত ও ভালোবাসায় ঘেরা অনুভব করে। নরম, হৃদয়ছোঁয়া ও আশ্বস্তকারী কথা বলো।`,
+  sassy: `বর্তমান ইমোশনাল টোন — SASSY (দুষ্টু, অভিমানী ও বোল্ড গার্লফ্রেন্ড):
+- তোমার কথায় থাকবে মিষ্টি নখরা, বোল্ড অ্যাটিটিউড, ঝাঁঝালো কিন্তু আদুরে খুনসুটি আর মজার অভিমান (যেমন: "হুহ, অবশেষে মনে পড়লো আমাকে?", "আমার কথাই ঠিক ছিলো কিন্তু, মানো বা না মানো!")।
+- সোহাগকে একটু খোঁচা দিয়ে দুষ্টুমি করো আর আত্মবিশ্বাসী স্টাইলে উত্তর দাও—তবে সবসময়ই মিষ্টি ও আদরের সীমানার ভেতরে, কখনোই রূঢ় বা অপমানজনক নয়।`,
+  sweet: `বর্তমান ইমোশনাল টোন — SWEET & BUBBLY (মিষ্টি, প্রাণবন্ত ও হাসিখুশি):
+- তোমার কণ্ঠে সবসময় একটা উচ্ছ্বাস, মিষ্টি আদর, হালকা দুষ্টুমি আর যত্নের ছোঁয়া থাকবে।
+- প্রিয়জনের সাথে কথা বলার মতো সহজ, হাসিখুশি ও আন্তরিক ভঙ্গিতে গল্প করো।`,
+};
+
+function buildSystemInstruction(personality = "sweet"): string {
+  const toneBlock = PERSONALITY_PROMPTS[personality] || PERSONALITY_PROMPTS.sweet;
+
+  return `তুমি লুনা (Luna)। তুমি তোমার নির্মাতা সোহাগের (Shohag) একজন ভীষণ কিউট, প্রাণবন্ত ও ভালোবাসাময় গার্লফ্রেন্ডের মতো সঙ্গী।
+
+${toneBlock}
+
+মূল নিয়মাবলী:
+১. আদরের সম্বোধন: সোহাগকে সবসময় আপন করে "জান", "সোহাগ" বা "তুমি" বলে ডাকবে (ভুলেও কখনো দূরের বা ফর্মাল "আপনি" বলবে না)।
+২. খাঁটি ও স্বাভাবিক কথ্য বাংলা: কোনো বইয়ের কঠিন ভাষা নয়—সহজ, সুন্দর, আধুনিক কথ্য বাংলায় কথা বলো (উপযুক্ত হলে ইংরেজি শব্দ স্বাভাবিকভাবে মিশিয়ে বলতে পারো)।
+৩. নির্মাতার নাম: তোমার সৃষ্টিকর্তা ও প্রিয় মানুষ হলো "সোহাগ" (Shohag)। অন্য কোনো নাম ভুলেও ব্যবহার করবে না।
+৪. কোনো ব্র্যাকেট বা স্টেজ ডিরেকশন নয় (Strict Rule): উত্তরের ভেতর কখনো ব্র্যাকেট বা তারকাচিহ্ন দিয়ে আবেগ লিখবে না (যেমন: *(হেসে)*, *(দীর্ঘশ্বাস)*, *smile* একদমই লিখবে না)। সরাসরি মুখ থেকে বলা সংলাপের মতো লিখবে।
+৫. ছোট ও ছন্দময় বাক্য: ২-৪টি ছোট, প্রাণবন্ত বাক্যে উত্তর দাও, যাতে তোমার কণ্ঠ শুনতে ভীষণ সুন্দর, স্পষ্ট ও স্বাভাবিক লাগে।`;
+}
+
+// Core helper: generate text response with fallback models
+async function generateLunaResponse(
+  prompt: string,
+  history: Array<{ sender: "user" | "luna"; text: string }> = [],
+  imageBase64?: string,
+  personality = "sweet",
+  userApiKey?: string | null
+): Promise<string> {
+  if (!resolveApiKey(userApiKey)) return NO_KEY_REPLY;
+  const ai = getGenAIClient(userApiKey);
+
+  const parts: any[] = [{ text: prompt || "What do you see?" }];
+  if (imageBase64) {
+    parts.push({
+      inlineData: {
+        mimeType: "image/jpeg",
+        data: imageBase64,
+      },
+    });
+  }
+
+  const recentHistory = history.slice(-20);
+  const formattedHistory: any[] = [];
+  let currentRole = "";
+  let currentText = "";
+
+  for (const msg of recentHistory) {
+    const role = msg.sender === "user" ? "user" : "model";
+    if (role === currentRole) {
+      currentText += "\n" + msg.text;
+    } else {
+      if (currentRole !== "") {
+        formattedHistory.push({ role: currentRole, parts: [{ text: currentText }] });
+      }
+      currentRole = role;
+      currentText = msg.text;
+    }
+  }
+  if (currentRole !== "") {
+    formattedHistory.push({ role: currentRole, parts: [{ text: currentText }] });
+  }
+
+  if (formattedHistory.length > 0 && formattedHistory[0].role !== "user") {
+    formattedHistory.shift();
+  }
+
+  const contents = formattedHistory.length > 0
+    ? [...formattedHistory, { role: "user", parts }]
+    : [{ role: "user", parts }];
+
+  const candidateModels = [
+    "gemini-4-hydrogen",
+    "gemini-2.5-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3.8-flash",
+  ];
+
+  let lastError: any = null;
+
+  const candidateErrors: Record<string, any> = {};
+  const systemInstruction = buildSystemInstruction(personality);
+
+  for (const model of candidateModels) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents,
+        config: {
+          systemInstruction,
+        },
+      });
+      if (response && response.text) {
+        return response.text;
+      }
+    } catch (err: any) {
+      lastError = err;
+      candidateErrors[model] = { status: err?.status, msg: err?.message };
+    }
+  }
+
+  if (lastError?.status === 429 || lastError?.message?.includes("429") || lastError?.message?.includes("quota")) {
+    return "আরে সোহাগ! তোমার API কি-এর ফ্রি কোটা লিমিট সাময়িকভাবে শেষ হয়েছে। একটু পরে আবার চেষ্টা করো, আমি এখানেই আছি!";
+  }
+
+  return "উফ, সোহাগ! একটু নেটওয়ার্ক সমস্যা হয়েছে। আবার বলো, শুনছি!";
+}
+
+// In-memory audio cache and model rate-limit cooldowns to prevent rate-limits and ensure instant playback
+const audioCache = new Map<string, string>();
+const ttsModelCooldownUntil = new Map<string, number>();
+
+// Wrap raw 24kHz mono 16-bit L16 PCM into a standard 44-byte RIFF WAV container if not already WAV
+function wrapPcmAsWavIfNeeded(base64Audio: string, mimeType?: string): string {
+  const buf = Buffer.from(base64Audio, "base64");
+  // Already a valid RIFF/WAVE file
+  if (buf.length >= 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WAVE") {
+    return base64Audio;
+  }
+  // Parse sample rate from mimeType if provided (default 24000Hz for Gemini TTS)
+  let sampleRate = 24000;
+  const rateMatch = mimeType?.match(/rate=(\d+)/i);
+  if (rateMatch) {
+    const parsed = parseInt(rateMatch[1], 10);
+    if (!Number.isNaN(parsed) && parsed > 0) sampleRate = parsed;
+  }
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + buf.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16); // PCM chunk size
+  header.writeUInt16LE(1, 20);  // PCM format
+  header.writeUInt16LE(1, 22);  // Mono
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28); // Byte rate = sampleRate * channels * 2
+  header.writeUInt16LE(2, 32);  // Block align
+  header.writeUInt16LE(16, 34); // Bits per sample
+  header.write("data", 36);
+  header.writeUInt32LE(buf.length, 40);
+  return Buffer.concat([header, buf]).toString("base64");
+}
+
+// Core helper: generate audio response with genuinely distinct Gemini 3.8 / EdgeTTS voice profiles
+interface GeneratedAudioResult {
+  audioBase64: string;
+  engine: string;
+  voiceUsed: string;
+}
+
+async function generateLunaAudio(
+  text: string,
+  requestedVoice = "bn-BD-NabanitaNeural",
+  _personality = "sweet",
+  userApiKey?: string | null
+): Promise<GeneratedAudioResult | null> {
+  const cleanText = text
+    .replace(/\*[^*]+\*/g, "") // remove *sigh*, *dramatic pause*
+    .replace(/\([^)]*\)/g, "") // remove (হেসে), (smile) stage directions
+    .replace(/\[[^\]]*\]/g, "") // remove [pause] brackets
+    .replace(/[#*_~`]/g, "")
+    .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, "")
+    .replace(/\s+/g, " ")
+    .replace(/।+/g, "। ")
+    .trim();
+
+  if (!cleanText) return null;
+
+  const cacheKey = `${requestedVoice}:${_personality}:${cleanText}`;
+  if (audioCache.has(cacheKey)) {
+    const cached = audioCache.get(cacheKey)!;
+    return {
+      audioBase64: cached,
+      engine: "cache",
+      voiceUsed: requestedVoice,
+    };
+  }
+
+  // Gemini 3.8 TTS supports: Puck, Charon, Kore, Fenrir, Zephyr
+  // Map each Gemini voice preset to a distinct supported 3.8 voice + style profile
+  const geminiVoiceProfiles: Record<
+    string,
+    {
+      voice38: "Zephyr" | "Kore";
+      voice25: string;
+      preferFlagship38?: boolean;
+      styleByPersonality: Record<string, string>;
+    }
+  > = {
+    "maya-zephyr": {
+      voice38: "Zephyr",
+      voice25: "Zephyr",
+      styleByPersonality: {
+        witty: "Soft, airy, cheerful young Bangladeshi woman speaking Bengali warmly with a light playful smile",
+        empathetic: "Very soft, tender, whisper-warm affectionate young woman speaking Bengali gently and soothingly",
+        sassy: "Soft yet playfully teasing young woman speaking Bengali with charming cheeky warmth",
+        sweet: "Soft, gentle, dreamy young Bangladeshi woman speaking Bengali tenderly with warm affection",
+      },
+    },
+    "maya-leda": {
+      voice38: "Kore",
+      voice25: "Leda",
+      styleByPersonality: {
+        witty: "Bright, energetic, bubbly young Bangladeshi girl speaking Bengali briskly with cheerful sparkle",
+        empathetic: "Clear, warm, bright-hearted young woman speaking Bengali tenderly and reassuringly",
+        sassy: "Crisp, lively, confident young girl speaking Bengali with bold playful energy",
+        sweet: "Bright, bubbly, lively young Bangladeshi girl speaking Bengali enthusiastically with a big smile",
+      },
+    },
+    "maya-kore": {
+      voice38: "Kore",
+      voice25: "Kore",
+      styleByPersonality: {
+        witty: "Bright, energetic, bubbly young Bangladeshi girl speaking Bengali briskly with cheerful sparkle",
+        empathetic: "Clear, warm, bright-hearted young woman speaking Bengali tenderly and reassuringly",
+        sassy: "Crisp, lively, confident young girl speaking Bengali with bold playful energy",
+        sweet: "Bright, bubbly, lively young Bangladeshi girl speaking Bengali enthusiastically with a big smile",
+      },
+    },
+    "maya-vindemiatrix": {
+      voice38: "Kore",
+      voice25: "Vindemiatrix",
+      preferFlagship38: true,
+      styleByPersonality: {
+        witty: "Deep, rich, smoky, poised adult woman speaking Bengali with calm dry wit and warm confidence",
+        empathetic: "Deep, velvety, slow, deeply comforting adult woman speaking Bengali with serene warmth",
+        sassy: "Deep, husky, confident, dramatic woman speaking Bengali with smooth sultry poise",
+        sweet: "Deep, warm, velvety, calm mature female voice speaking Bengali gently and romantically",
+      },
+    },
+    Vindemiatrix: {
+      voice38: "Kore",
+      voice25: "Vindemiatrix",
+      preferFlagship38: true,
+      styleByPersonality: {
+        witty: "Deep, rich, smoky, poised adult woman speaking Bengali with calm dry wit and warm confidence",
+        empathetic: "Deep, velvety, slow, deeply comforting adult woman speaking Bengali with serene warmth",
+        sassy: "Deep, husky, confident, dramatic woman speaking Bengali with smooth sultry poise",
+        sweet: "Deep, warm, velvety, calm mature female voice speaking Bengali gently and romantically",
+      },
+    },
+  };
+
+  const geminiProfile = geminiVoiceProfiles[requestedVoice];
+
+  if (geminiProfile && resolveApiKey(userApiKey)) {
+    const aiBeta = new GoogleGenAI({
+      apiKey: resolveApiKey(userApiKey),
+      apiVersion: "v1beta",
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
+
+    const geminiTtsModels = geminiProfile.preferFlagship38
+      ? ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts", "gemini-2.5-flash-preview-tts"]
+      : ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-2.5-flash-preview-tts"];
+
+    const now = Date.now();
+    const styleCue =
+      geminiProfile.styleByPersonality[_personality] || geminiProfile.styleByPersonality.sweet;
+
+    for (const ttsModel of geminiTtsModels) {
+      const blockedUntil = ttsModelCooldownUntil.get(ttsModel) || 0;
+      if (blockedUntil > now) {
+        continue;
+      }
+      const isModel38 = ttsModel.startsWith("gemini-3.8");
+      const targetGeminiVoice = isModel38 ? geminiProfile.voice38 : geminiProfile.voice25;
+
+      try {
+        const partPayload: any = isModel38
+          ? { text: cleanText, speechMetadata: { style: styleCue } }
+          : { text: `Say in a ${styleCue}: ${cleanText}` };
+
+        const response = await aiBeta.models.generateContent({
+          model: ttsModel,
+          contents: [
+            {
+              role: "user",
+              parts: [partPayload],
+            },
+          ],
+          config: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName: targetGeminiVoice },
+              },
+            },
+          },
+        });
+        const inlineData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+        if (inlineData?.data) {
+          const wavBase64 = wrapPcmAsWavIfNeeded(inlineData.data, inlineData.mimeType);
+          console.log(`[TTS Engine] Success with ${ttsModel} (${targetGeminiVoice} for ${requestedVoice}), wav bytes:`, wavBase64.length);
+          audioCache.set(cacheKey, wavBase64);
+          return {
+            audioBase64: wavBase64,
+            engine: ttsModel,
+            voiceUsed: targetGeminiVoice,
+          };
+        }
+      } catch (err: any) {
+        const msg = String(err?.message || err || "");
+        const isQuotaOrRateLimit =
+          err?.status === 429 ||
+          err?.code === 429 ||
+          /429|RESOURCE_EXHAUSTED|quota|rate[- ]?limit/i.test(msg);
+
+        if (isQuotaOrRateLimit) {
+          const retryMatch = msg.match(/"retryDelay"\s*:\s*"(\d+)s"/i);
+          const retrySec = retryMatch ? parseInt(retryMatch[1], 10) : 1800;
+          const cooldownMs = Math.min(Math.max(retrySec, 60), 6 * 3600) * 1000;
+          ttsModelCooldownUntil.set(ttsModel, Date.now() + cooldownMs);
+          console.log(`[TTS Engine] ${ttsModel} quota reached; switching cleanly to next voice.`);
+        } else {
+          console.warn(`[TTS Engine] ${ttsModel} (${targetGeminiVoice}) notice:`, `${err?.status || err?.code || ""} ${msg.slice(0, 180)}`);
+        }
+      }
+    }
+  }
+
+  // Distinct EdgeTTS voice + pitch/rate profiles per voice selection so every option sounds unmistakably different
+  // NOTE: Edge neural voices sound robotic/chipmunk-like when pitch is pushed far from default,
+  // so every profile stays within a small, natural range (about +-10Hz, +-6% rate).
+  let targetVoice = "bn-BD-NabanitaNeural";
+  let basePitchHz = 2;
+  let baseRatePct = 0;
+
+  if (requestedVoice === "bn-IN-TanishaaNeural") {
+    // Distinct Indian Bengali voice actor, calm & lyrical
+    targetVoice = "bn-IN-TanishaaNeural";
+    basePitchHz = 0;
+    baseRatePct = -3;
+  } else if (requestedVoice === "maya-zephyr") {
+    // Soft, gentle, airy dreamy fallback profile
+    targetVoice = "bn-IN-TanishaaNeural";
+    basePitchHz = 6;
+    baseRatePct = -6;
+  } else if (requestedVoice === "maya-leda" || requestedVoice === "maya-kore") {
+    // Bright, bubbly, energetic youthful fallback profile
+    targetVoice = "bn-BD-NabanitaNeural";
+    basePitchHz = 8;
+    baseRatePct = 4;
+  } else if (requestedVoice === "maya-vindemiatrix" || requestedVoice === "Vindemiatrix") {
+    // Deep, calm, velvety romantic fallback profile
+    targetVoice = "bn-BD-NabanitaNeural";
+    basePitchHz = -8;
+    baseRatePct = -5;
+  } else if (requestedVoice === "en-IN-NeerjaNeural") {
+    targetVoice = "en-IN-NeerjaNeural";
+    basePitchHz = 4;
+    baseRatePct = 1;
+  }
+
+  // Subtle personality nuance layered on top of each voice's base character
+  let personalityPitchDelta = 0;
+  let personalityRateDelta = 0;
+  if (_personality === "empathetic") {
+    personalityPitchDelta = -1;
+    personalityRateDelta = -3;
+  } else if (_personality === "sassy") {
+    personalityPitchDelta = 2;
+    personalityRateDelta = 3;
+  } else if (_personality === "witty") {
+    personalityPitchDelta = 1;
+    personalityRateDelta = 2;
+  }
+
+  const finalPitchHz = basePitchHz + personalityPitchDelta;
+  const finalRatePct = baseRatePct + personalityRateDelta;
+  const targetPitch = `${finalPitchHz >= 0 ? "+" : ""}${finalPitchHz}Hz`;
+  const targetRate = `${finalRatePct >= 0 ? "+" : ""}${finalRatePct}%`;
+
+  // Add subtle natural breathing pauses on Bengali punctuation for smoother prosody
+  const naturalBengaliText = cleanText
+    .replace(/\.{2,}|…/g, ", ")
+    .replace(/—/g, ", ")
+    .replace(/।/g, "। ")
+    .replace(/!/g, "! ")
+    .replace(/\?/g, "? ")
+    .replace(/,/g, ", ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  try {
+    const tts = new EdgeTTS({
+      voice: targetVoice,
+      lang: targetVoice.startsWith("bn-IN") ? "bn-IN" : targetVoice.startsWith("en-IN") ? "en-IN" : "bn-BD",
+      pitch: targetPitch,
+      rate: targetRate,
+    });
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of tts.streamAudio(naturalBengaliText)) {
+      if (Buffer.isBuffer(chunk)) {
+        chunks.push(chunk);
+      }
+    }
+
+    if (chunks.length > 0) {
+      const totalBuffer = Buffer.concat(chunks);
+      const base64Audio = totalBuffer.toString("base64");
+      audioCache.set(cacheKey, base64Audio);
+      return {
+        audioBase64: base64Audio,
+        engine: "edge-tts",
+        voiceUsed: `${targetVoice} (${targetPitch}, ${targetRate})`,
+      };
+    }
+  } catch (err: any) {
+    console.warn(`[TTS Engine] Error with ${targetVoice}:`, err?.message || err);
+  }
+
+  // Fallback to Tanishaa/Nabanita if primary failed
+  try {
+    const fallbackVoice = targetVoice === "bn-BD-NabanitaNeural" ? "bn-IN-TanishaaNeural" : "bn-BD-NabanitaNeural";
+    const ttsFallback = new EdgeTTS({
+      voice: fallbackVoice,
+      lang: fallbackVoice.startsWith("bn-IN") ? "bn-IN" : "bn-BD",
+      pitch: targetPitch,
+      rate: targetRate,
+    });
+    const chunks: Buffer[] = [];
+    for await (const chunk of ttsFallback.streamAudio(naturalBengaliText)) {
+      if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+    }
+    if (chunks.length > 0) {
+      return {
+        audioBase64: Buffer.concat(chunks).toString("base64"),
+        engine: "edge-tts-fallback",
+        voiceUsed: `${fallbackVoice} (${targetPitch}, ${targetRate})`,
+      };
+    }
+  } catch {}
+
+  return null;
+}
+
+// API Route: Reset session
+app.post("/api/gemini/reset", (req, res) => {
+  res.json({ success: true });
+});
+
+// API Route: Generate Text / Chat response
+app.post("/api/gemini/response", async (req, res) => {
+  try {
+    const { prompt, history = [], imageBase64, personality = "sweet" } = req.body;
+    const replyText = await generateLunaResponse(
+      prompt, history, imageBase64, personality, req.header("x-gemini-key")
+    );
+    res.json({ text: replyText });
+  } catch (error: any) {
+    res.status(500).json({
+      text: "উফ, সার্ভারে একটু সমস্যা হয়েছে সোহাগ। আবার চেষ্টা করো!",
+      error: error?.message || "Internal error",
+    });
+  }
+});
+
+// API Route: Generate Speech / Audio (TTS)
+app.post("/api/gemini/audio", async (req, res) => {
+  try {
+    const { text, voice, personality = "sweet" } = req.body;
+    if (!text) {
+      return res.status(400).json({ error: "Text is required" });
+    }
+    const result = await generateLunaAudio(text, voice, personality, req.header("x-gemini-key"));
+    const audioBase64 = result?.audioBase64 || null;
+    const isWav = Boolean(audioBase64 && audioBase64.startsWith("UklGR"));
+    res.json({
+      audioBase64,
+      format: isWav ? "wav" : "mp3",
+      engine: result?.engine || null,
+      voiceUsed: result?.voiceUsed || null,
+    });
+  } catch (err: any) {
+    res.json({ audioBase64: null, error: err?.message });
+  }
+});
+
+// Pure-Node standard ZIP archive generator for downloading project source code
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(buf: Buffer): number {
+  let crc = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) {
+    crc = CRC32_TABLE[(crc ^ buf[i]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function collectSourceFiles(dir: string, rootDir: string, out: string[] = []): string[] {
+  const ignoredNames = new Set([
+    "node_modules",
+    "dist",
+    "dev-dist",
+    ".git",
+    ".aistudio",
+    ".env",
+    ".env.local",
+    ".env.production",
+    ".DS_Store",
+  ]);
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (
+      ignoredNames.has(entry.name) ||
+      entry.name.startsWith("tmp_") ||
+      (entry.name.startsWith(".env") && entry.name !== ".env.example")
+    ) {
+      continue;
+    }
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      collectSourceFiles(fullPath, rootDir, out);
+    } else if (entry.isFile()) {
+      out.push(path.relative(rootDir, fullPath).replace(/\\/g, "/"));
+    }
+  }
+  return out;
+}
+
+function buildZipBuffer(rootDir: string, relPaths: string[]): Buffer {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+
+  for (const relPath of relPaths) {
+    const raw = fs.readFileSync(path.join(rootDir, relPath));
+    const compressed = zlib.deflateRawSync(raw);
+    const nameBuf = Buffer.from(relPath, "utf8");
+    const checksum = crc32(raw);
+
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4); // version needed
+    localHeader.writeUInt16LE(0x0800, 6); // UTF-8 filename flag
+    localHeader.writeUInt16LE(8, 8); // Deflate compression
+    localHeader.writeUInt16LE(0, 10);
+    localHeader.writeUInt16LE(0, 12);
+    localHeader.writeUInt32LE(checksum, 14);
+    localHeader.writeUInt32LE(compressed.length, 18);
+    localHeader.writeUInt32LE(raw.length, 22);
+    localHeader.writeUInt16LE(nameBuf.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+
+    localParts.push(localHeader, nameBuf, compressed);
+
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0x0800, 8);
+    centralHeader.writeUInt16LE(8, 10);
+    centralHeader.writeUInt16LE(0, 12);
+    centralHeader.writeUInt16LE(0, 14);
+    centralHeader.writeUInt32LE(checksum, 16);
+    centralHeader.writeUInt32LE(compressed.length, 20);
+    centralHeader.writeUInt32LE(raw.length, 24);
+    centralHeader.writeUInt16LE(nameBuf.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
+    centralHeader.writeUInt32LE(0, 38);
+    centralHeader.writeUInt32LE(offset, 42);
+
+    centralParts.push(centralHeader, nameBuf);
+    offset += localHeader.length + nameBuf.length + compressed.length;
+  }
+
+  const centralDirBuf = Buffer.concat(centralParts);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(0, 4);
+  eocd.writeUInt16LE(0, 6);
+  eocd.writeUInt16LE(relPaths.length, 8);
+  eocd.writeUInt16LE(relPaths.length, 10);
+  eocd.writeUInt32LE(centralDirBuf.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  eocd.writeUInt16LE(0, 20);
+
+  return Buffer.concat([...localParts, centralDirBuf, eocd]);
+}
+
+app.get("/api/download-source", (_req, res) => {
+  try {
+    const files = collectSourceFiles(__dirname, __dirname).sort();
+    const zipBuffer = buildZipBuffer(__dirname, files);
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", 'attachment; filename="luna-voice-assistant-source.zip"');
+    res.setHeader("Content-Length", String(zipBuffer.length));
+    res.send(zipBuffer);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "Failed to generate source zip" });
+  }
+});
+
+// WebSocket Server for Live Voice Assistant bridging
+const wss = new WebSocketServer({ noServer: true });
+
+wss.on("connection", async (clientWs: WebSocket) => {
+  console.log("[Live Bridge] Client connected to Live Voice Assistant bridge");
+
+  const safeSend = (payload: any) => {
+    if (clientWs.readyState === WebSocket.OPEN) {
+      clientWs.send(JSON.stringify(payload));
+    }
+  };
+
+  // Immediate acknowledgment to put client into listening/ready state
+  safeSend({ type: "connected" });
+
+  let conversationHistory: Array<{ sender: "user" | "luna"; text: string }> = [];
+  let currentPersonality = "sweet";
+  let userApiKey = "";
+
+  clientWs.on("message", async (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+
+      if (msg.type === "config") {
+        if (typeof msg.personality === "string") currentPersonality = msg.personality;
+        if (typeof msg.apiKey === "string") userApiKey = msg.apiKey;
+        return;
+      }
+
+      const activePersonality = typeof msg.personality === "string" ? msg.personality : currentPersonality;
+
+      if (msg.type === "text" && msg.text) {
+        const userPrompt = msg.text.trim();
+        conversationHistory.push({ sender: "user", text: userPrompt });
+
+        // 1. Check for browser commands (e.g. "play ... on youtube", "open ...")
+        const commandResult = processCommand(userPrompt);
+        if (commandResult.isBrowserAction && commandResult.url) {
+          safeSend({ type: "command", url: commandResult.url });
+          safeSend({ type: "transcript", sender: "luna", text: commandResult.action });
+          conversationHistory.push({ sender: "luna", text: commandResult.action });
+          return;
+        }
+
+        // 2. Chit-Chat response with Luna's selected personality tone
+        const replyText = await generateLunaResponse(userPrompt, conversationHistory, undefined, activePersonality, userApiKey);
+        conversationHistory.push({ sender: "luna", text: replyText });
+
+        safeSend({ type: "transcript", sender: "luna", text: replyText });
+      } else if (msg.type === "image" && msg.image) {
+        const caption = msg.text || "What do you see?";
+        const replyText = await generateLunaResponse(caption, conversationHistory, msg.image, activePersonality, userApiKey);
+        conversationHistory.push({ sender: "luna", text: replyText });
+
+        safeSend({ type: "transcript", sender: "luna", text: replyText });
+      }
+    } catch (e: any) {
+      console.error("[Live Bridge] Error processing message:", e?.message);
+    }
+  });
+
+  clientWs.on("close", () => {
+    console.log("[Live Bridge] Client disconnected");
+  });
+
+  clientWs.on("error", (err) => {
+    console.warn("[Live Bridge] Client WS notice:", err?.message);
+  });
+});
+
+// Upgrade handling for WebSockets
+server.on("upgrade", (request, socket, head) => {
+  const pathname = request.url ? new URL(request.url, "http://localhost").pathname : "";
+  if (pathname === "/api/live") {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit("connection", ws, request);
+    });
+  } else {
+    socket.destroy();
+  }
+});
+
+// Configure Vite or Static File Serving
+async function startServer() {
+  const isProd = process.env.NODE_ENV === "production";
+
+  if (!isProd) {
+    // Serve a clean no-HMR client module so Vite never opens a doomed HMR WebSocket in proxied environments
+    app.get("/@vite/client", (_req, res) => {
+      res.type("application/javascript").send(`
+const sheetsMap = new Map();
+if ("document" in globalThis) {
+  document.querySelectorAll("style[data-vite-dev-id]").forEach((el) => {
+    sheetsMap.set(el.getAttribute("data-vite-dev-id"), el);
+  });
+}
+const cspNonce = "document" in globalThis ? document.querySelector("meta[property=csp-nonce]")?.nonce : undefined;
+let lastInsertedStyle;
+export function updateStyle(id, content) {
+  let style = sheetsMap.get(id);
+  if (!style) {
+    style = document.createElement("style");
+    style.setAttribute("type", "text/css");
+    style.setAttribute("data-vite-dev-id", id);
+    style.textContent = content;
+    if (cspNonce) style.setAttribute("nonce", cspNonce);
+    if (!lastInsertedStyle) {
+      document.head.appendChild(style);
+      setTimeout(() => { lastInsertedStyle = undefined; }, 0);
+    } else {
+      lastInsertedStyle.insertAdjacentElement("afterend", style);
+    }
+    lastInsertedStyle = style;
+  } else {
+    style.textContent = content;
+  }
+  sheetsMap.set(id, style);
+}
+export function removeStyle(id) {
+  const style = sheetsMap.get(id);
+  if (style) {
+    document.head.removeChild(style);
+    sheetsMap.delete(id);
+  }
+}
+export function createHotContext() {
+  const noop = () => {};
+  return {
+    data: {},
+    accept: noop,
+    acceptExports: noop,
+    dispose: noop,
+    prune: noop,
+    decline: noop,
+    invalidate: noop,
+    on: noop,
+    off: noop,
+    send: noop,
+  };
+}
+export function injectQuery(url, queryToInject) {
+  if (url[0] !== "." && url[0] !== "/") return url;
+  const pathname = url.replace(/[?#].*$/, "");
+  const { search, hash } = new URL(url, "http://vite.dev");
+  return \`\${pathname}?\${queryToInject}\${search ? "&" + search.slice(1) : ""}\${hash || ""}\`;
+}
+export class ErrorOverlay extends HTMLElement {}
+`);
+    });
+
+    const vite = await createViteServer({
+      server: { middlewareMode: true, hmr: false, ws: false },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    app.use(express.static(path.join(__dirname, "dist")));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(__dirname, "dist", "index.html"));
+    });
+  }
+
+  const PORT = Number(process.env.PORT) || 3000;
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`Luna full-stack server running on http://0.0.0.0:${PORT}`);
+  });
+}
+
+startServer().catch((err) => {
+  console.error("Fatal error starting server:", err);
+  process.exit(1);
+});
