@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { Sparkles, Volume2, Check, X, RefreshCw, Heart, Smile, Gauge, RotateCcw, Palette, Languages, KeyRound, Eye, EyeOff } from "lucide-react";
 import { getLunaAudio } from "../services/geminiService";
 import { playPCM } from "../utils/audioUtils";
-import { speakLuna } from "../utils/speech";
+import { speakLuna, stopLunaSpeech } from "../utils/speech";
 import { ThemeId, THEMES, THEME_OPTIONS } from "../utils/theme";
 import { getApiKey, setApiKey, clearApiKey } from "../utils/apiKey";
 
@@ -99,7 +99,7 @@ export const CUTE_VOICES: VoiceOption[] = [
   },
   {
     id: "maya-leda",
-    name: "লুনা — চঞ্চল ও উচ্ছ্বল (Kore) ✨",
+    name: "লুনা — চঞ্চল ও উচ্ছ্বল (Leda) ✨",
     dialect: "প্রাণবন্ত ও দ্রুত",
     description: "সতেজ, হাসিখুশি ও চঞ্চল মেয়েলি কণ্ঠ (আগের চেয়ে একটু বেশি প্রাণবন্ত ও মিষ্টি)",
     isNeural: true,
@@ -161,6 +161,8 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
   onSelectTheme,
 }) => {
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
+  const testRunRef = useRef(0);
   const [keyInput, setKeyInput] = useState<string>(() => getApiKey());
   const [hasSavedKey, setHasSavedKey] = useState<boolean>(() => Boolean(getApiKey()));
   const [showKey, setShowKey] = useState(false);
@@ -171,23 +173,35 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
   const t = THEMES[selectedTheme];
 
   const handleTestVoice = async (voice: VoiceOption) => {
+    // Latest click wins: a slower response for an earlier voice must never play over
+    // (or instead of) the voice the user clicked last.
+    const runId = ++testRunRef.current;
+    const isStale = () => testRunRef.current !== runId;
+
+    stopLunaSpeech();
+    setFallbackNotice(null);
     setTestingId(voice.id);
 
     try {
       const testPhrase = "হেই জান! কেমন আছো তুমি? আমি লুনা, তোমার সাথে গল্প করতে চলে এসেছি!";
       if (voice.isNeural) {
         const audio = await getLunaAudio(testPhrase, voice.id, selectedPersonality);
+        if (isStale()) return;
         if (audio) {
           await playPCM(audio, "mp3", speakingRate);
-          setTestingId(null);
           return;
         }
+        setFallbackNotice(
+          "এই কণ্ঠটি এখন সার্ভার থেকে আনা যায়নি (নেটওয়ার্ক/কোটা সমস্যা হতে পারে), তাই আপনার ডিভাইসের ভয়েস বাজছে — এটা এই কণ্ঠ নয়।"
+        );
       }
+      if (isStale()) return;
       await speakLuna(testPhrase, undefined, undefined, speakingRate);
     } catch (e) {
       console.warn("Test voice error:", e);
+      if (!isStale()) setFallbackNotice("শব্দ বাজানো যায়নি। ব্রাউজারের সাউন্ড পারমিশন ও ভলিউম দেখুন।");
     } finally {
-      setTestingId(null);
+      if (!isStale()) setTestingId(null);
     }
   };
 
@@ -509,6 +523,12 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
               <Volume2 size={14} className={t.settingsIcon} />
               <span>Voice (কণ্ঠস্বর)</span>
             </div>
+
+            {fallbackNotice && (
+              <p className="mb-2.5 text-[11px] leading-relaxed text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2">
+                {fallbackNotice}
+              </p>
+            )}
 
             <div className="space-y-2.5">
               {CUTE_VOICES.map((v) => {

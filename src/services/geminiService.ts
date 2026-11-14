@@ -54,24 +54,36 @@ export async function getLunaAudio(
     return null;
   }
 
-  try {
-    const response = await fetch("/api/gemini/audio", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...apiKeyHeaders(),
-      },
-      body: JSON.stringify({ text, voice, personality }),
-    });
+  // One retry: the server-side TTS engines occasionally fail on a single attempt, and
+  // without a retry Luna would show the message but stay silent (or use a different voice).
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 25000);
+    try {
+      const response = await fetch("/api/gemini/audio", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...apiKeyHeaders(),
+        },
+        body: JSON.stringify({ text, voice, personality }),
+        signal: controller.signal,
+      });
 
-    if (!response.ok) {
-      throw new Error(`TTS HTTP error ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`TTS HTTP error ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (data.audioBase64) return data.audioBase64;
+    } catch (error) {
+      console.warn(`Cloud TTS attempt ${attempt + 1} failed:`, error);
+      if (typeof navigator !== "undefined" && !navigator.onLine) return null;
+    } finally {
+      clearTimeout(timer);
     }
-
-    const data = await response.json();
-    return data.audioBase64 || null;
-  } catch (error) {
-    console.warn("Cloud TTS unavailable, falling back to offline speech:", error);
-    return null;
   }
+
+  console.warn("Cloud TTS unavailable, falling back to device speech");
+  return null;
 }

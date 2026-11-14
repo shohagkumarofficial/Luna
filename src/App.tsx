@@ -228,10 +228,24 @@ export default function App() {
   }, [messages, appState]);
 
   // Reliable speech and audio playback with sweet, cute female voice
+  // Each call gets a run id. If a newer reply (or a stop/mute) supersedes it, the older call
+  // must not start playing late audio on top of the new one — that is what made the wrong
+  // voice play after switching voices quickly.
+  const voiceRunRef = useRef(0);
+
   const playLunaVoice = useCallback(async (text: string) => {
     if (isMutedRef.current) return;
+    const runId = ++voiceRunRef.current;
+    const isStale = () => voiceRunRef.current !== runId;
+
     setAppState("speaking");
     liveSessionRef.current?.pauseRecognition();
+
+    const finishRun = () => {
+      if (isStale()) return;
+      setAppState(liveSessionRef.current ? "listening" : "idle");
+      liveSessionRef.current?.resumeRecognition();
+    };
 
     const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
     try {
@@ -241,10 +255,14 @@ export default function App() {
           selectedVoiceRef.current,
           selectedPersonalityRef.current
         );
+        if (isStale()) return;
+        if (isMutedRef.current) {
+          finishRun();
+          return;
+        }
         if (audioBase64) {
           await playPCM(audioBase64, "mp3", speakingRateRef.current);
-          setAppState(liveSessionRef.current ? "listening" : "idle");
-          liveSessionRef.current?.resumeRecognition();
+          finishRun();
           return;
         }
       }
@@ -252,14 +270,19 @@ export default function App() {
       console.warn("Server audio notice:", e);
     }
 
-    // High quality Web Speech fallback so Luna always speaks out loud
+    if (isStale()) return;
+    if (isMutedRef.current) {
+      finishRun();
+      return;
+    }
+
+    // Device Web Speech fallback so Luna still speaks out loud when cloud voice is unavailable
     await speakLuna(
       text,
-      () => setAppState("speaking"),
       () => {
-        setAppState(liveSessionRef.current ? "listening" : "idle");
-        liveSessionRef.current?.resumeRecognition();
+        if (!isStale()) setAppState("speaking");
       },
+      finishRun,
       speakingRateRef.current
     );
   }, []);
@@ -336,6 +359,7 @@ export default function App() {
         window.clearTimeout(wakeWordTimeoutRef.current);
         wakeWordTimeoutRef.current = null;
       }
+      voiceRunRef.current++; // cancel any reply still being fetched for playback
       stopLunaSpeech();
       if (liveSessionRef.current) {
         liveSessionRef.current.stop();

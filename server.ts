@@ -162,6 +162,13 @@ async function generateLunaResponse(
 
 // In-memory audio cache and model rate-limit cooldowns to prevent rate-limits and ensure instant playback
 const audioCache = new Map<string, string>();
+function cacheAudio(key: string, value: string) {
+  if (audioCache.size >= 100) {
+    const oldest = audioCache.keys().next().value;
+    if (oldest !== undefined) audioCache.delete(oldest);
+  }
+  audioCache.set(key, value);
+}
 const ttsModelCooldownUntil = new Map<string, number>();
 
 // Wrap raw 24kHz mono 16-bit L16 PCM into a standard 44-byte RIFF WAV container if not already WAV
@@ -308,9 +315,15 @@ async function generateLunaAudio(
       },
     });
 
-    const geminiTtsModels = geminiProfile.preferFlagship38
-      ? ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts", "gemini-2.5-flash-preview-tts"]
-      : ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-2.5-flash-preview-tts"];
+    // When the 3.8 models can only offer a stand-in voice (e.g. Leda/Vindemiatrix -> Kore), try the
+    // 2.5 model first so the voice the user actually selected is the one that plays. Otherwise two
+    // different menu entries would sound identical.
+    const exactVoiceOnlyOn25 = geminiProfile.voice38 !== geminiProfile.voice25;
+    const geminiTtsModels = exactVoiceOnlyOn25
+      ? ["gemini-2.5-flash-preview-tts", "gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"]
+      : geminiProfile.preferFlagship38
+        ? ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts", "gemini-2.5-flash-preview-tts"]
+        : ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-2.5-flash-preview-tts"];
 
     const now = Date.now();
     const styleCue =
@@ -350,7 +363,7 @@ async function generateLunaAudio(
         if (inlineData?.data) {
           const wavBase64 = wrapPcmAsWavIfNeeded(inlineData.data, inlineData.mimeType);
           console.log(`[TTS Engine] Success with ${ttsModel} (${targetGeminiVoice} for ${requestedVoice}), wav bytes:`, wavBase64.length);
-          audioCache.set(cacheKey, wavBase64);
+          cacheAudio(cacheKey, wavBase64);
           return {
             audioBase64: wavBase64,
             engine: ttsModel,
@@ -370,6 +383,10 @@ async function generateLunaAudio(
           const cooldownMs = Math.min(Math.max(retrySec, 60), 6 * 3600) * 1000;
           ttsModelCooldownUntil.set(ttsModel, Date.now() + cooldownMs);
           console.log(`[TTS Engine] ${ttsModel} quota reached; switching cleanly to next voice.`);
+        } else if (err?.status === 404 || err?.code === 404 || /NOT_FOUND|not found/i.test(msg)) {
+          // Model unavailable for this key/API version: skip it for a while instead of retrying every request
+          ttsModelCooldownUntil.set(ttsModel, Date.now() + 60 * 60 * 1000);
+          console.warn(`[TTS Engine] ${ttsModel} not available, skipping for 1h.`);
         } else {
           console.warn(`[TTS Engine] ${ttsModel} (${targetGeminiVoice}) notice:`, `${err?.status || err?.code || ""} ${msg.slice(0, 180)}`);
         }
@@ -440,33 +457,37 @@ async function generateLunaAudio(
     .replace(/\s+/g, " ")
     .trim();
 
-  try {
-    const tts = new EdgeTTS({
-      voice: targetVoice,
-      lang: targetVoice.startsWith("bn-IN") ? "bn-IN" : targetVoice.startsWith("en-IN") ? "en-IN" : "bn-BD",
-      pitch: targetPitch,
-      rate: targetRate,
-    });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const tts = new EdgeTTS({
+        voice: targetVoice,
+        lang: targetVoice.startsWith("bn-IN") ? "bn-IN" : targetVoice.startsWith("en-IN") ? "en-IN" : "bn-BD",
+        pitch: targetPitch,
+        rate: targetRate,
+      });
 
-    const chunks: Buffer[] = [];
-    for await (const chunk of tts.streamAudio(naturalBengaliText)) {
-      if (Buffer.isBuffer(chunk)) {
-        chunks.push(chunk);
+      const chunks: Buffer[] = [];
+      for await (const chunk of tts.streamAudio(naturalBengaliText)) {
+        if (Buffer.isBuffer(chunk)) {
+          chunks.push(chunk);
+        }
       }
-    }
 
-    if (chunks.length > 0) {
-      const totalBuffer = Buffer.concat(chunks);
-      const base64Audio = totalBuffer.toString("base64");
-      audioCache.set(cacheKey, base64Audio);
-      return {
-        audioBase64: base64Audio,
-        engine: "edge-tts",
-        voiceUsed: `${targetVoice} (${targetPitch}, ${targetRate})`,
-      };
+      if (chunks.length > 0) {
+        const totalBuffer = Buffer.concat(chunks);
+        const base64Audio = totalBuffer.toString("base64");
+        // Audio produced as a stand-in for a Gemini voice (quota/outage) must not be cached under
+        // that voice, otherwise it would keep being served after Gemini recovers.
+        if (!geminiProfile) cacheAudio(cacheKey, base64Audio);
+        return {
+          audioBase64: base64Audio,
+          engine: "edge-tts",
+          voiceUsed: `${targetVoice} (${targetPitch}, ${targetRate})`,
+        };
+      }
+    } catch (err: any) {
+      console.warn(`[TTS Engine] Error with ${targetVoice} (attempt ${attempt + 1}):`, err?.message || err);
     }
-  } catch (err: any) {
-    console.warn(`[TTS Engine] Error with ${targetVoice}:`, err?.message || err);
   }
 
   // Fallback to Tanishaa/Nabanita if primary failed

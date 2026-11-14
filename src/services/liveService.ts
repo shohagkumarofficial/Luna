@@ -9,6 +9,10 @@ export class LiveSessionManager {
   private recognition: any = null;
   private isRecognizing: boolean = false;
   private recognitionRestartTimeout: any = null;
+  // True while Luna's reply is being spoken by the app. The mic must stay off during this time:
+  // a restarting SpeechRecognition steals audio focus on mobile (cutting the voice off) and
+  // would also transcribe Luna's own voice as user input.
+  private externallyPaused: boolean = false;
 
   // Audio playback state (24kHz for Gemini audio)
   private playbackContext: AudioContext | null = null;
@@ -160,7 +164,7 @@ export class LiveSessionManager {
   // Continuous speech recognition for conversational voice in
   private startSpeechRecognition() {
     const SpeechRec = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRec || this.isRecognizing) return;
+    if (!SpeechRec || this.isRecognizing || this.externallyPaused) return;
 
     try {
       this.recognition = new SpeechRec();
@@ -204,7 +208,7 @@ export class LiveSessionManager {
       this.recognition.onend = () => {
         this.isRecognizing = false;
         // Automatically restart if still in listening state and not playing
-        if (this.ws && !this.isPlaying) {
+        if (this.ws && !this.isPlaying && !this.externallyPaused) {
           this.recognitionRestartTimeout = setTimeout(() => {
             this.startSpeechRecognition();
           }, 300);
@@ -218,10 +222,12 @@ export class LiveSessionManager {
   }
 
   public pauseRecognition() {
+    this.externallyPaused = true;
     this.stopSpeechRecognition();
   }
 
   public resumeRecognition() {
+    this.externallyPaused = false;
     if (this.ws && !this.isPlaying && !this.isRecognizing) {
       this.startSpeechRecognition();
     }
@@ -347,6 +353,7 @@ export class LiveSessionManager {
   }
 
   stop() {
+    this.externallyPaused = false;
     this.stopSpeechRecognition();
     if (this.processor) {
       this.processor.disconnect();
