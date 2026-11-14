@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { X, RefreshCw, Play, Check, FlaskConical, Square } from "lucide-react";
 import { getApiKey } from "../utils/apiKey";
-import { getModelPref, setModelPref } from "../utils/modelPrefs";
+import { getModelPref, setModelPref, markModelResult } from "../utils/modelPrefs";
 import { addLog } from "../utils/voiceLog";
 import {
   LAB_VOICES, LabModel, LabResult, LiveMethod, ModelKindLab,
@@ -81,6 +81,7 @@ export const ModelLabPanel: React.FC<ModelLabPanelProps> = ({ isOpen, onClose })
     else res = await testLive(key, m.id, voice, "হ্যালো, আমি লুনা। তুমি কেমন আছো?", method);
     const status: RowState["status"] = res.ok === true ? "ok" : res.ok === false ? "fail" : "warn";
     setResults((r) => ({ ...r, [m.id]: { status, ms: res.ms, message: res.message } }));
+    if (res.ok === true || res.ok === false) markModelResult(m.kind, m.id, res.ok === true);
     if (res.ok === true && m.kind !== "live") {
       // a working test also lifts the server's "rest" list for this key
       fetch("/api/gemini/reset-cooldowns", { method: "POST", headers: { "x-gemini-key": getApiKey() || "" } }).catch(() => {});

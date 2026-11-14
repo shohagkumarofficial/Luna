@@ -41,6 +41,10 @@ function sanitizeModel(v?: string | null): string | undefined {
   return /^[A-Za-z0-9._-]{2,80}$/.test(t) ? t : undefined;
 }
 
+function sanitizeModelList(v?: string | null): string[] {
+  return (v || "").split(",").map((x) => sanitizeModel(x)).filter((x): x is string => Boolean(x)).slice(0, 8);
+}
+
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const t = setTimeout(() => reject(Object.assign(new Error("timeout"), { status: "timeout" })), ms);
@@ -110,7 +114,8 @@ async function generateLunaResponseDetailed(
   imageBase64?: string,
   personality = "sweet",
   userApiKey?: string | null,
-  preferredModel?: string | null
+  preferredModel?: string | null,
+  okModels: string[] = []
 ): Promise<ChatResult> {
   if (!resolveApiKey(userApiKey)) {
     return { text: NO_KEY_REPLY, model: null, trace: ["Gemini Key নেই"], noKey: true };
@@ -163,7 +168,7 @@ async function generateLunaResponseDetailed(
     "gemini-3.8-flash",
   ];
   const chosen = sanitizeModel(preferredModel);
-  const candidateModels = chosen ? [chosen, ...defaultModels.filter((m) => m !== chosen)] : defaultModels;
+  const candidateModels = Array.from(new Set([...(chosen ? [chosen] : []), ...okModels, ...defaultModels]));
 
   const trace: string[] = [];
   const systemInstruction = buildSystemInstruction(personality);
@@ -225,9 +230,10 @@ async function generateLunaResponse(
   imageBase64?: string,
   personality = "sweet",
   userApiKey?: string | null,
-  preferredModel?: string | null
+  preferredModel?: string | null,
+  okModels: string[] = []
 ): Promise<string> {
-  return (await generateLunaResponseDetailed(prompt, history, imageBase64, personality, userApiKey, preferredModel)).text;
+  return (await generateLunaResponseDetailed(prompt, history, imageBase64, personality, userApiKey, preferredModel, okModels)).text;
 }
 
 // In-memory audio cache and model rate-limit cooldowns to prevent rate-limits and ensure instant playback
@@ -312,7 +318,8 @@ async function generateLunaAudio(
   _personality = "sweet",
   userApiKey?: string | null,
   eleven?: ElevenOptions,
-  preferredTtsModel?: string
+  preferredTtsModel?: string,
+  okTtsModels: string[] = []
 ): Promise<GeneratedAudioResult | null> {
   const cleanText = text
     .replace(/\*[^*]+\*/g, "") // remove *sigh*, *dramatic pause*
@@ -508,6 +515,13 @@ async function generateLunaAudio(
         geminiTtsModels = [preferredTtsModel, ...defaultTtsModels.filter((m) => m !== preferredTtsModel)];
       }
     }
+    // Models that passed a Lab test come right after the chosen one, before the built-in list.
+    const okUsable = okTtsModels.filter((m) => !(geminiProfile.only25 && m.startsWith("gemini-3.8")));
+    geminiTtsModels = Array.from(new Set([
+      ...(preferredTtsModel && geminiTtsModels[0] === preferredTtsModel ? [preferredTtsModel] : []),
+      ...okUsable,
+      ...geminiTtsModels,
+    ]));
 
     const now = Date.now();
     const styleCue =
@@ -738,7 +752,7 @@ app.post("/api/gemini/response", async (req, res) => {
   try {
     const { prompt, history = [], imageBase64, personality = "sweet" } = req.body;
     const chat = await generateLunaResponseDetailed(
-      prompt, history, imageBase64, personality, req.header("x-gemini-key"), sanitizeModel(req.header("x-text-model"))
+      prompt, history, imageBase64, personality, req.header("x-gemini-key"), sanitizeModel(req.header("x-text-model")), sanitizeModelList(req.header("x-text-ok"))
     );
     res.json({ text: chat.text, noKey: Boolean(chat.noKey), model: chat.model, trace: chat.trace });
   } catch (error: any) {
@@ -769,7 +783,7 @@ app.post("/api/gemini/audio", async (req, res) => {
       return res.status(400).json({ error: "Text is required" });
     }
     lastFailedTrace = [];
-    const result = await generateLunaAudio(text, voice, personality, req.header("x-gemini-key"), readElevenOptions(req), sanitizeModel(req.header("x-tts-model")));
+    const result = await generateLunaAudio(text, voice, personality, req.header("x-gemini-key"), readElevenOptions(req), sanitizeModel(req.header("x-tts-model")), sanitizeModelList(req.header("x-tts-ok")));
     const audioBase64 = result?.audioBase64 || null;
     const isWav = Boolean(audioBase64 && audioBase64.startsWith("UklGR"));
     res.json({
