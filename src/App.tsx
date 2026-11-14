@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Mic, MicOff, Loader2, Volume2, VolumeX, Keyboard, Send, Trash2, Image as ImageIcon, Smartphone, MessageSquare, X, Sparkles, Heart, Flame, Smile } from "lucide-react";
+import { Mic, MicOff, Loader2, Volume2, VolumeX, Keyboard, Send, Trash2, Image as ImageIcon, Smartphone, MessageSquare, X, Sparkles, Heart, Flame, Smile, ScrollText } from "lucide-react";
 import { getLunaResponse, getLunaAudio, resetLunaSession } from "./services/geminiService";
 import { processCommand } from "./services/commandService";
 import { LiveSessionManager } from "./services/liveService";
@@ -7,6 +7,7 @@ import Visualizer from "./components/Visualizer";
 import PermissionModal from "./components/PermissionModal";
 import { APKModal } from "./components/APKModal";
 import { VoiceSettingsModal, PersonalityId, PERSONALITIES, SpeechLangCode } from "./components/VoiceSettingsModal";
+import { VoiceLogPanel } from "./components/VoiceLogPanel";
 import { OfflineIndicator } from "./components/OfflineIndicator";
 import { StreamingText } from "./components/StreamingText";
 import { usePWAInstall } from "./hooks/usePWAInstall";
@@ -117,6 +118,7 @@ export default function App() {
   const [showAPKModal, setShowAPKModal] = useState(false);
   const [showChatDrawer, setShowChatDrawer] = useState(false);
   const [showVoiceModal, setShowVoiceModal] = useState(false);
+  const [showLogPanel, setShowLogPanel] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState<string>(() => {
     return localStorage.getItem("luna_voice_choice") || "maya-leda";
   });
@@ -514,6 +516,8 @@ export default function App() {
         theme={selectedTheme}
       />
 
+      <VoiceLogPanel isOpen={showLogPanel} onClose={() => setShowLogPanel(false)} />
+
       <VoiceSettingsModal
         isOpen={showVoiceModal}
         onClose={() => setShowVoiceModal(false)}
@@ -539,7 +543,7 @@ export default function App() {
       <header className="absolute top-0 left-0 w-full flex justify-between items-center z-30 shrink-0 px-4 sm:px-6 py-4 md:px-12 md:py-6">
         <div className="flex items-center gap-3">
           <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${t.brandAvatar}`}>
-            Z
+            L
           </div>
           <div>
             <h1 className="text-xl font-serif font-medium tracking-wide opacity-90 leading-tight">Luna</h1>
@@ -547,6 +551,15 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* Diagnostic log button */}
+          <button
+            onClick={() => setShowLogPanel(true)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold tracking-wide transition-all border shadow-lg active:scale-95 ${t.settingsBtn}`}
+            title="লগ দেখুন (কোন ইঞ্জিনে ভয়েস তৈরি হচ্ছে)"
+          >
+            <ScrollText size={14} className={t.settingsIcon} />
+            <span className="hidden sm:inline">লগ</span>
+          </button>
           {/* Cute Voice & Personality Settings Button */}
           <button
             onClick={() => setShowVoiceModal(true)}

@@ -207,7 +207,11 @@ interface GeneratedAudioResult {
   audioBase64: string;
   engine: string;
   voiceUsed: string;
+  trace?: string[];
 }
+
+// Attempt log of the most recent TTS call that produced no audio at all.
+let lastFailedTrace: string[] = [];
 
 async function generateLunaAudio(
   text: string,
@@ -227,6 +231,9 @@ async function generateLunaAudio(
 
   if (!cleanText) return null;
 
+  // Human-readable record of every engine attempt, returned to the app's log panel.
+  const trace: string[] = [];
+
   const cacheKey = `${requestedVoice}:${_personality}:${cleanText}`;
   if (audioCache.has(cacheKey)) {
     const cached = audioCache.get(cacheKey)!;
@@ -234,6 +241,7 @@ async function generateLunaAudio(
       audioBase64: cached,
       engine: "cache",
       voiceUsed: requestedVoice,
+      trace: ["cache: আগের তৈরি অডিও ব্যবহার হয়েছে"],
     };
   }
 
@@ -307,6 +315,12 @@ async function generateLunaAudio(
 
   const geminiProfile = geminiVoiceProfiles[requestedVoice];
 
+  if (!geminiProfile) {
+    trace.push(`Gemini: "${requestedVoice}" ভয়েসের Gemini প্রোফাইল নেই, সরাসরি Edge TTS`);
+  } else if (!resolveApiKey(userApiKey)) {
+    trace.push("Gemini: API Key নেই, তাই Gemini বাদ দিয়ে Edge TTS (সেটিংসে Key দাও)");
+  }
+
   if (geminiProfile && resolveApiKey(userApiKey)) {
     const aiBeta = new GoogleGenAI({
       apiKey: resolveApiKey(userApiKey),
@@ -331,8 +345,10 @@ async function generateLunaAudio(
     for (const ttsModel of geminiTtsModels) {
       const blockedUntil = ttsModelCooldownUntil.get(ttsModel) || 0;
       if (blockedUntil > now) {
+        trace.push(`${ttsModel}: বাদ (কোটা/অনুপস্থিত, ~${Math.ceil((blockedUntil - now) / 60000)} মিনিট পর আবার চেষ্টা)`);
         continue;
       }
+      const attemptStart = Date.now();
       const isModel38 = ttsModel.startsWith("gemini-3.8");
       const targetGeminiVoice = isModel38 ? geminiProfile.voice38 : geminiProfile.voice25;
 
@@ -363,13 +379,19 @@ async function generateLunaAudio(
           const wavBase64 = wrapPcmAsWavIfNeeded(inlineData.data, inlineData.mimeType);
           console.log(`[TTS Engine] Success with ${ttsModel} (${targetGeminiVoice} for ${requestedVoice}), wav bytes:`, wavBase64.length);
           cacheAudio(cacheKey, wavBase64);
+          trace.push(`${ttsModel}: OK (${targetGeminiVoice}, ${Date.now() - attemptStart}ms)`);
           return {
             audioBase64: wavBase64,
             engine: ttsModel,
             voiceUsed: targetGeminiVoice,
+            trace,
           };
         }
+        trace.push(`${ttsModel}: অডিও ডেটা আসেনি`);
       } catch (err: any) {
+        trace.push(
+          `${ttsModel}: ব্যর্থ (${err?.status || err?.code || "error"}) ${String(err?.message || err || "").slice(0, 120)}`
+        );
         const msg = String(err?.message || err || "");
         const isQuotaOrRateLimit =
           err?.status === 429 ||
@@ -490,14 +512,17 @@ async function generateLunaAudio(
         // Audio produced as a stand-in for a Gemini voice (quota/outage) must not be cached under
         // that voice, otherwise it would keep being served after Gemini recovers.
         if (!geminiProfile) cacheAudio(cacheKey, base64Audio);
+        trace.push(`edge-tts: OK (${targetVoice}, ${targetPitch}, ${targetRate})`);
         return {
           audioBase64: base64Audio,
           engine: "edge-tts",
           voiceUsed: `${targetVoice} (${targetPitch}, ${targetRate})`,
+          trace,
         };
       }
     } catch (err: any) {
       console.warn(`[TTS Engine] Error with ${targetVoice} (attempt ${attempt + 1}):`, err?.message || err);
+      trace.push(`edge-tts ${targetVoice} চেষ্টা ${attempt + 1}: ব্যর্থ ${String(err?.message || err || "").slice(0, 100)}`);
     }
   }
 
@@ -515,14 +540,20 @@ async function generateLunaAudio(
       if (Buffer.isBuffer(chunk)) chunks.push(chunk);
     }
     if (chunks.length > 0) {
+      trace.push(`edge-tts-fallback: OK (${fallbackVoice})`);
       return {
         audioBase64: Buffer.concat(chunks).toString("base64"),
         engine: "edge-tts-fallback",
         voiceUsed: `${fallbackVoice} (${targetPitch}, ${targetRate})`,
+        trace,
       };
     }
-  } catch {}
+  } catch (err: any) {
+    trace.push(`edge-tts-fallback: ব্যর্থ ${String(err?.message || err || "").slice(0, 100)}`);
+  }
 
+  // Last resort: caller still wants the attempt log even though no audio was produced.
+  lastFailedTrace = trace;
   return null;
 }
 
@@ -554,6 +585,7 @@ app.post("/api/gemini/audio", async (req, res) => {
     if (!text) {
       return res.status(400).json({ error: "Text is required" });
     }
+    lastFailedTrace = [];
     const result = await generateLunaAudio(text, voice, personality, req.header("x-gemini-key"));
     const audioBase64 = result?.audioBase64 || null;
     const isWav = Boolean(audioBase64 && audioBase64.startsWith("UklGR"));
@@ -562,6 +594,7 @@ app.post("/api/gemini/audio", async (req, res) => {
       format: isWav ? "wav" : "mp3",
       engine: result?.engine || null,
       voiceUsed: result?.voiceUsed || null,
+      trace: result?.trace || lastFailedTrace,
     });
   } catch (err: any) {
     res.json({ audioBase64: null, error: err?.message });
