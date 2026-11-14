@@ -81,6 +81,10 @@ export const ModelLabPanel: React.FC<ModelLabPanelProps> = ({ isOpen, onClose })
     else res = await testLive(key, m.id, voice, "হ্যালো, আমি লুনা। তুমি কেমন আছো?", method);
     const status: RowState["status"] = res.ok === true ? "ok" : res.ok === false ? "fail" : "warn";
     setResults((r) => ({ ...r, [m.id]: { status, ms: res.ms, message: res.message } }));
+    if (res.ok === true && m.kind !== "live") {
+      // a working test also lifts the server's "rest" list for this key
+      fetch("/api/gemini/reset-cooldowns", { method: "POST", headers: { "x-gemini-key": getApiKey() || "" } }).catch(() => {});
+    }
     addLog(res.ok === true ? "ok" : res.ok === false ? "error" : "warn", `মডেল টেস্ট (${m.kind}): ${m.id} · ${res.ms}ms`, [res.message]);
     if (res.audio && audioRef.current) {
       audioRef.current.src = URL.createObjectURL(res.audio);

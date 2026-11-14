@@ -515,7 +515,7 @@ async function generateLunaAudio(
 
     for (const ttsModel of geminiTtsModels) {
       const blockedUntil = ttsModelCooldownUntil.get(`${kid}:${ttsModel}`) || 0;
-      if (blockedUntil > now) {
+      if (blockedUntil > now && ttsModel !== preferredTtsModel) {
         trace.push(`${ttsModel}: বাদ (কোটা/অনুপস্থিত, ~${Math.ceil((blockedUntil - now) / 60000)} মিনিট পর আবার চেষ্টা)`);
         continue;
       }
@@ -572,13 +572,13 @@ async function generateLunaAudio(
         if (isQuotaOrRateLimit) {
           const retryMatch = msg.match(/"retryDelay"\s*:\s*"(\d+)s"/i);
           const retrySec = retryMatch ? parseInt(retryMatch[1], 10) : 1800;
-          const cooldownMs = Math.min(Math.max(retrySec, 60), 6 * 3600) * 1000;
+          const cooldownMs = Math.min(Math.max(retrySec, 20), 300) * 1000; // at most 5 minutes
           ttsModelCooldownUntil.set(`${kid}:${ttsModel}`, Date.now() + cooldownMs);
           console.log(`[TTS Engine] ${ttsModel} quota reached; switching cleanly to next voice.`);
         } else if (err?.status === 404 || err?.code === 404 || /NOT_FOUND|not found/i.test(msg)) {
           // Model unavailable for this key/API version: skip it for a while instead of retrying every request
-          ttsModelCooldownUntil.set(`${kid}:${ttsModel}`, Date.now() + 60 * 60 * 1000);
-          console.warn(`[TTS Engine] ${ttsModel} not available, skipping for 1h.`);
+          ttsModelCooldownUntil.set(`${kid}:${ttsModel}`, Date.now() + 10 * 60 * 1000);
+          console.warn(`[TTS Engine] ${ttsModel} not available, skipping for 10 min.`);
         } else {
           console.warn(`[TTS Engine] ${ttsModel} (${targetGeminiVoice}) notice:`, `${err?.status || err?.code || ""} ${msg.slice(0, 180)}`);
         }
@@ -750,6 +750,18 @@ app.post("/api/gemini/response", async (req, res) => {
 });
 
 // API Route: Generate Speech / Audio (TTS)
+// Clears this key's model "rest" lists (called by the Model Lab after a successful test)
+app.post("/api/gemini/reset-cooldowns", (req, res) => {
+  const prefix = `${keyId(req.header("x-gemini-key"))}:`;
+  let cleared = 0;
+  for (const map of [ttsModelCooldownUntil, textModelCooldownUntil]) {
+    for (const k of Array.from(map.keys())) {
+      if (k.startsWith(prefix)) { map.delete(k); cleared++; }
+    }
+  }
+  res.json({ cleared });
+});
+
 app.post("/api/gemini/audio", async (req, res) => {
   try {
     const { text, voice, personality = "sweet" } = req.body;
