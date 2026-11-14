@@ -141,7 +141,9 @@ export default function App() {
   const [showModelLab, setShowModelLab] = useState(false);
   const [showLive, setShowLive] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState<string>(() => {
-    return localStorage.getItem("luna_voice_choice") || "maya-leda";
+    const saved = localStorage.getItem("luna_voice_choice") || "maya-leda";
+    // the old robotic Edge voices were removed
+    return /Neural$/.test(saved) ? "maya-leda" : saved;
   });
   const selectedVoiceRef = useRef(selectedVoice);
 

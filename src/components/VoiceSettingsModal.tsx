@@ -126,22 +126,6 @@ export const CUTE_VOICES: VoiceOption[] = [
     avatar: "🍓",
   },
   {
-    id: "bn-BD-NabanitaNeural",
-    name: "নবানিতা — বাংলাদেশী বাংলা 🇧🇩",
-    dialect: "স্বাভাবিক বাংলাদেশী উচ্চারণ",
-    description: "ফ্রি ও সবসময় চলে (Gemini Key ছাড়াও) — তবে একটু পরিণত শোনায়",
-    isNeural: true,
-    avatar: "💖",
-  },
-  {
-    id: "bn-IN-TanishaaNeural",
-    name: "তানিশা — কলকাতা বাংলা 🌺",
-    dialect: "শান্ত ও সুরেলা",
-    description: "নরম ও সুরেলা ভারতীয় বাংলা কণ্ঠ (Gemini Key ছাড়াও চলে)",
-    isNeural: true,
-    avatar: "🌺",
-  },
-  {
     id: "maya-vindemiatrix",
     name: "মায়া — গভীর ও শান্ত (Vindemiatrix) 🎙️",
     dialect: "গভীর ও ধীর",
@@ -222,11 +206,6 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
         const audio = await getLunaAudio(testPhrase, voice.id, selectedPersonality);
         if (isStale()) return;
         if (audio) {
-          if (voice.id.startsWith("maya-") && (lastAudioEngine || "").startsWith("edge")) {
-            setFallbackNotice(
-              "Gemini কণ্ঠ পাওয়া যায়নি (API Key নেই বা কোটা শেষ), তাই বিকল্প ইঞ্জিনের ভয়েস বাজছে — এ কারণে সব ভয়েস একই রকম ও একটু পরিণত শোনায়। সেটিংসে নিজের Gemini API Key দিলে আলাদা আলাদা কিউট কণ্ঠ পাবেন।"
-            );
-          }
           await playPCM(audio, "mp3", speakingRate);
           return;
         }

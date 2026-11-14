@@ -625,6 +625,11 @@ async function generateLunaAudio(
   return null;
 }
 
+// Lightweight health check for uptime monitors (keeps the free Render service awake)
+app.get("/healthz", (_req, res) => {
+  res.type("text/plain").send("ok");
+});
+
 // API Route: Reset session
 app.post("/api/gemini/reset", (req, res) => {
   res.json({ success: true });
