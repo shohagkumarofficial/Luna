@@ -79,6 +79,23 @@ const MOOD_BADGES: Record<
   },
 };
 
+// Splits a reply into 1-3 speakable chunks at sentence ends (Bengali danda, ., !, ?).
+function splitForSpeech(text: string): string[] {
+  const clean = text.trim();
+  if (clean.length < 70) return [clean];
+  const sentences = clean.match(/[^।.!?\n]+[।.!?]*/g)?.map((s) => s.trim()).filter(Boolean) || [clean];
+  if (sentences.length < 2) return [clean];
+  const maxChunks = 3;
+  const target = Math.ceil(sentences.length / maxChunks);
+  const chunks: string[] = [];
+  for (let i = 0; i < sentences.length; i += target) chunks.push(sentences.slice(i, i + target).join(" "));
+  // keep the first chunk short so audio starts quickly
+  if (chunks.length > 1 && chunks[0].length > 120 && sentences.length >= 3) {
+    return [sentences[0], sentences.slice(1, Math.ceil((sentences.length + 1) / 2)).join(" "), sentences.slice(Math.ceil((sentences.length + 1) / 2)).join(" ")].filter(Boolean);
+  }
+  return chunks;
+}
+
 export default function App() {
   const [appState, setAppState] = useState<AppState>("idle");
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
@@ -254,18 +271,32 @@ export default function App() {
     const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
     try {
       if (!isOffline && selectedVoiceRef.current !== "device-cute") {
-        const audioBase64 = await getLunaAudio(
-          text,
-          selectedVoiceRef.current,
-          selectedPersonalityRef.current
-        );
-        if (isStale()) return;
-        if (isMutedRef.current) {
-          finishRun();
-          return;
-        }
-        if (audioBase64) {
+        // Speak sentence by sentence: the first sentence starts playing while the next one is
+        // being prepared, so Luna starts talking much sooner than waiting for the whole reply.
+        const chunks = splitForSpeech(text);
+        const fetchChunk = (c: string) =>
+          getLunaAudio(c, selectedVoiceRef.current, selectedPersonalityRef.current).catch(() => null);
+        let pending: Promise<string | null> = fetchChunk(chunks[0]);
+        let spokenAll = true;
+        for (let i = 0; i < chunks.length; i++) {
+          const audioBase64 = await pending;
+          if (isStale()) return;
+          if (isMutedRef.current) {
+            finishRun();
+            return;
+          }
+          if (!audioBase64) {
+            // cloud voice failed for this part: say the rest with the device voice
+            spokenAll = false;
+            const rest = chunks.slice(i).join(" ");
+            await speakLuna(rest, () => { if (!isStale()) setAppState("speaking"); }, finishRun, speakingRateRef.current);
+            return;
+          }
+          if (i + 1 < chunks.length) pending = fetchChunk(chunks[i + 1]);
           await playPCM(audioBase64, "mp3", speakingRateRef.current);
+          if (isStale()) return;
+        }
+        if (spokenAll) {
           finishRun();
           return;
         }
