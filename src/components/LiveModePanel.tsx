@@ -80,6 +80,12 @@ export const LiveModePanel: React.FC<Props> = ({ isOpen, onClose, onOpenLab }) =
   };
 
   useEffect(() => {
+    if (isOpen) {
+      try { setVoice(localStorage.getItem(VOICE_KEY) || "Leda"); } catch {}
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
     if (!isOpen) stop();
     return () => stop();
   }, [isOpen]);

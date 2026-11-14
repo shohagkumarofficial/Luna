@@ -142,6 +142,20 @@ export const ModelLabPanel: React.FC<ModelLabPanelProps> = ({ isOpen, onClose })
 
   const tabInfo = TABS.find((t) => t.id === tab)!;
 
+  // Luna's own voice profiles that exist for the normal (non-Live) mode
+  const LUNA_PROFILES = ["leda", "zephyr", "aoede", "laomedeia", "achernar", "vindemiatrix"];
+  const lunaProfileId = `maya-${voice.toLowerCase()}`;
+  const canSetLunaVoice = tab === "tts" && LUNA_PROFILES.includes(voice.toLowerCase());
+  const [voiceMsg, setVoiceMsg] = useState("");
+  const setLunaVoice = () => {
+    window.dispatchEvent(new CustomEvent("luna-set-voice", { detail: lunaProfileId }));
+    setVoiceMsg(`লুনার কণ্ঠ এখন ${voice}`);
+  };
+  const setLiveVoice = () => {
+    try { localStorage.setItem("luna_live_voice", voice); } catch {}
+    setVoiceMsg(`লাইভের কণ্ঠ এখন ${voice}`);
+  };
+
   return (
     <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/70" onClick={onClose}>
       <div
@@ -233,6 +247,17 @@ export const ModelLabPanel: React.FC<ModelLabPanelProps> = ({ isOpen, onClose })
                 ))}
               </select>
             )}
+            {canSetLunaVoice && (
+              <button type="button" onClick={setLunaVoice} className="px-3 py-1.5 rounded-full text-xs bg-pink-500/20 text-pink-200 border border-pink-400/30 active:scale-95 transition">
+                {voice} = লুনার কণ্ঠ করুন
+              </button>
+            )}
+            {tab === "live" && (
+              <button type="button" onClick={setLiveVoice} className="px-3 py-1.5 rounded-full text-xs bg-pink-500/20 text-pink-200 border border-pink-400/30 active:scale-95 transition">
+                {voice} = লাইভের কণ্ঠ করুন
+              </button>
+            )}
+            {voiceMsg && <span className="text-[11px] text-emerald-300">{voiceMsg}</span>}
             {tab !== "text" && (
               <select
                 value={voice}

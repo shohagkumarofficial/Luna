@@ -184,6 +184,16 @@ export default function App() {
     localStorage.setItem("luna_voice_choice", voiceId);
   };
 
+  // The Model Lab can set Luna's default voice (event keeps the app state in sync)
+  useEffect(() => {
+    const onVoice = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (typeof id === "string" && id) handleSelectVoice(id);
+    };
+    window.addEventListener("luna-set-voice", onVoice);
+    return () => window.removeEventListener("luna-set-voice", onVoice);
+  }, []);
+
   const handleSelectPersonality = (personality: PersonalityId) => {
     setSelectedPersonality(personality);
     selectedPersonalityRef.current = personality;
