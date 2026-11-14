@@ -71,9 +71,9 @@ export const ModelLabPanel: React.FC<ModelLabPanelProps> = ({ isOpen, onClose })
     addLog("ok", `মডেলের তালিকা: ${list.length}টি`, []);
   };
 
-  const runOne = async (m: LabModel): Promise<void> => {
+  const runOne = async (m: LabModel): Promise<LabResult | null> => {
     const key = getApiKey();
-    if (!key) return;
+    if (!key) return null;
     setResults((r) => ({ ...r, [m.id]: { status: "running" } }));
     let res: LabResult;
     if (m.kind === "text") res = await testText(key, m.id, "এক বাক্যে বাংলায় হ্যালো বলো।");
@@ -91,6 +91,7 @@ export const ModelLabPanel: React.FC<ModelLabPanelProps> = ({ isOpen, onClose })
       audioRef.current.src = URL.createObjectURL(res.audio);
       audioRef.current.play().catch(() => {});
     }
+    return res;
   };
 
   const runAll = async () => {
@@ -102,6 +103,28 @@ export const ModelLabPanel: React.FC<ModelLabPanelProps> = ({ isOpen, onClose })
       await new Promise((r) => setTimeout(r, 400));
     }
     setBatchRunning(false);
+  };
+
+  // Tests every model in the current tab and selects the fastest one that works.
+  const autoPick = async () => {
+    stopRef.current = false;
+    setBatchRunning(true);
+    let best: { m: LabModel; ms: number } | null = null;
+    const pool = models.filter((m) => m.kind === tab && !/transcribe/i.test(m.id));
+    for (const m of pool) {
+      if (stopRef.current) break;
+      const res = await runOne(m);
+      if (res && res.ok === true && (!best || res.ms < best.ms)) best = { m, ms: res.ms };
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    setBatchRunning(false);
+    if (best) {
+      setModelPref(best.m.kind, best.m.id);
+      setSelected((s) => ({ ...s, [best!.m.kind]: best!.m.id }));
+      addLog("ok", `অটো বাছাই (${best.m.kind}): ${best.m.id} · ${best.ms}ms`, []);
+    } else if (!stopRef.current) {
+      addLog("warn", "অটো বাছাই: কোনো মডেল চলেনি", []);
+    }
   };
 
   const choose = (m: LabModel) => {
@@ -184,6 +207,16 @@ export const ModelLabPanel: React.FC<ModelLabPanelProps> = ({ isOpen, onClose })
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs bg-white/10 hover:bg-white/15 border border-white/10 disabled:opacity-50 active:scale-95 transition"
               >
                 <Play size={13} /> সব টেস্ট করুন ({visible.length})
+              </button>
+            )}
+            {!batchRunning && (
+              <button
+                type="button"
+                disabled={!hasKey || models.filter((m) => m.kind === tab).length === 0}
+                onClick={autoPick}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs bg-violet-500/20 text-violet-200 border border-violet-400/30 disabled:opacity-50 active:scale-95 transition"
+              >
+                <Check size={13} /> অটো বাছাই
               </button>
             )}
             {tab !== "text" && (

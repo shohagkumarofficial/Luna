@@ -19,6 +19,8 @@ const LEVEL_LABEL: Record<LogLevel, string> = { ok: "OK", warn: "সতর্ক
 export const VoiceLogPanel: React.FC<VoiceLogPanelProps> = ({ isOpen, onClose }) => {
   const [logs, setLogs] = useState<LogEntry[]>(() => getLogs());
   const [copied, setCopied] = useState(false);
+  const [onlyProblems, setOnlyProblems] = useState(false);
+  const shown = onlyProblems ? logs.filter((e) => e.level !== "ok") : logs;
 
   useEffect(() => {
     setLogs(getLogs());
@@ -59,6 +61,13 @@ export const VoiceLogPanel: React.FC<VoiceLogPanelProps> = ({ isOpen, onClose })
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={() => setOnlyProblems((v) => !v)}
+              className={`px-3 py-1.5 rounded-full text-xs border active:scale-95 transition ${onlyProblems ? "bg-amber-500/20 border-amber-400/40 text-amber-200" : "bg-white/10 border-white/10"}`}
+            >
+              শুধু সমস্যা
+            </button>
+            <button
+              type="button"
               onClick={handleCopy}
               className="flex items-center gap-1 px-3 py-1.5 rounded-full text-xs bg-white/10 hover:bg-white/15 border border-white/10 active:scale-95 transition"
             >
@@ -85,12 +94,12 @@ export const VoiceLogPanel: React.FC<VoiceLogPanelProps> = ({ isOpen, onClose })
         </div>
 
         <div className="overflow-y-auto p-3 space-y-2">
-          {logs.length === 0 ? (
+          {shown.length === 0 ? (
             <p className="text-center text-xs text-white/50 py-10">
               এখনো কোনো লগ নেই। লুনার সাথে কথা বলো, তারপর এখানে দেখো।
             </p>
           ) : (
-            logs.map((e) => (
+            shown.map((e) => (
               <div key={e.id} className="rounded-2xl border border-white/10 bg-white/5 p-3">
                 <div className="flex items-center gap-2">
                   <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${LEVEL_STYLE[e.level]}`}>
