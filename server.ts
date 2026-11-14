@@ -9,7 +9,6 @@ import { WebSocketServer, WebSocket } from "ws";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI, Modality } from "@google/genai";
-import { EdgeTTS } from "node-edge-tts";
 import { processCommand } from "./src/services/commandService.ts";
 
 dotenv.config();
@@ -25,14 +24,20 @@ const server = http.createServer(app);
 // Initialize shared GoogleGenAI client for server-side calls
 // The API key comes from the user's own browser settings (sent per request).
 // GEMINI_API_KEY env var is only an optional fallback and is NOT required.
+// The browser may send several keys separated by commas; they are tried one after another.
+function parseKeys(userKey?: string | null): string[] {
+  const list = Array.from(new Set((userKey || "").split(/[\s,;]+/).map((k) => k.trim()).filter(Boolean))).slice(0, 6);
+  if (list.length) return list;
+  return process.env.GEMINI_API_KEY ? [process.env.GEMINI_API_KEY] : [];
+}
+
 function resolveApiKey(userKey?: string | null): string | undefined {
-  const k = (userKey || "").trim();
-  return k || process.env.GEMINI_API_KEY || undefined;
+  return parseKeys(userKey)[0];
 }
 
 // Cooldowns are tracked per API key + model, so one visitor's quota problem never blocks another's.
-function keyId(userKey?: string | null): string {
-  return createHash("sha1").update(resolveApiKey(userKey) || "").digest("hex").slice(0, 10);
+function keyId(singleKey?: string | null): string {
+  return createHash("sha1").update(singleKey || "").digest("hex").slice(0, 10);
 }
 
 // Model names coming from the browser are validated before use.
@@ -66,9 +71,9 @@ const textModelCooldownUntil = new Map<string, number>();
 const NO_KEY_REPLY =
   "সোহাগ, আমার কথা বলার জন্য Gemini API Key লাগবে। উপরে সেটিংস থেকে API Key যোগ করে দাও, তারপর আমরা গল্প করবো!";
 
-function getGenAIClient(userKey?: string | null): GoogleGenAI {
+function getGenAIClient(singleKey?: string | null): GoogleGenAI {
   return new GoogleGenAI({
-    apiKey: resolveApiKey(userKey),
+    apiKey: singleKey || undefined,
     httpOptions: {
       headers: {
         "User-Agent": "aistudio-build",
@@ -120,7 +125,8 @@ async function generateLunaResponseDetailed(
   if (!resolveApiKey(userApiKey)) {
     return { text: NO_KEY_REPLY, model: null, trace: ["Gemini Key নেই"], noKey: true };
   }
-  const ai = getGenAIClient(userApiKey);
+  const keys = parseKeys(userApiKey);
+  const ais = keys.map((k) => getGenAIClient(k));
 
   const parts: any[] = [{ text: prompt || "What do you see?" }];
   if (imageBase64) {
@@ -172,37 +178,42 @@ async function generateLunaResponseDetailed(
 
   const trace: string[] = [];
   const systemInstruction = buildSystemInstruction(personality);
-  const kid = keyId(userApiKey);
+  const kids = keys.map((k) => keyId(k));
   const deadline = Date.now() + 45000; // never keep the user waiting more than ~45s in total
   let lastError: any = null;
 
-  for (const model of candidateModels) {
+  // Best model first; if it fails on one key (e.g. quota), the same model is tried on the next key
+  // before moving down to a weaker model.
+  outer: for (const model of candidateModels) {
+   for (let ki = 0; ki < keys.length; ki++) {
+    const kid = kids[ki];
+    const ktag = keys.length > 1 ? ` [Key ${ki + 1}]` : "";
     const remaining = deadline - Date.now();
     if (remaining < 3000) {
       trace.push("সময়সীমা শেষ (৪৫ সেকেন্ড), বাকি মডেল চেষ্টা করা হয়নি");
-      break;
+      break outer;
     }
     const blockedUntil = textModelCooldownUntil.get(`${kid}:${model}`) || 0;
     if (blockedUntil > Date.now()) {
-      trace.push(`${model}: বাদ (সমস্যার কারণে ~${Math.ceil((blockedUntil - Date.now()) / 60000)} মিনিট বিশ্রামে)`);
+      trace.push(`${model}${ktag}: বাদ (সমস্যার কারণে ~${Math.ceil((blockedUntil - Date.now()) / 60000)} মিনিট বিশ্রামে)`);
       continue;
     }
     const started = Date.now();
     try {
       const response = await withTimeout(
-        ai.models.generateContent({ model, contents, config: { systemInstruction } }),
+        ais[ki].models.generateContent({ model, contents, config: { systemInstruction } }),
         Math.min(20000, remaining)
       );
       if (response && response.text) {
-        trace.push(`${model}: OK (${Date.now() - started}ms)`);
+        trace.push(`${model}${ktag}: OK (${Date.now() - started}ms)`);
         return { text: response.text, model, trace };
       }
-      trace.push(`${model}: খালি উত্তর`);
+      trace.push(`${model}${ktag}: খালি উত্তর`);
     } catch (err: any) {
       lastError = err;
       const status = err?.status;
       const msg = String(err?.message || err || "").replace(/\s+/g, " ").slice(0, 110);
-      trace.push(`${model}: ব্যর্থ (${status || "error"}) ${msg}`);
+      trace.push(`${model}${ktag}: ব্যর্থ (${status || "error"}) ${msg}`);
       const cool =
         status === "timeout" ? 2 * 60000
         : status === 403 || status === 404 ? 10 * 60000
@@ -211,6 +222,7 @@ async function generateLunaResponseDetailed(
         : 0;
       if (cool) textModelCooldownUntil.set(`${kid}:${model}`, Date.now() + cool);
     }
+   }
   }
 
   if (lastError?.status === 429 || lastError?.message?.includes("429") || lastError?.message?.includes("quota")) {
@@ -482,24 +494,27 @@ async function generateLunaAudio(
   };
   geminiVoiceProfiles["Vindemiatrix"] = geminiVoiceProfiles["maya-vindemiatrix"];
 
-  const geminiProfile = geminiVoiceProfiles[requestedVoice];
-
-  if (!geminiProfile) {
-    trace.push(`Gemini: "${requestedVoice}" ভয়েসের Gemini প্রোফাইল নেই, সরাসরি Edge TTS`);
-  } else if (!resolveApiKey(userApiKey)) {
-    trace.push("Gemini: API Key নেই, তাই Gemini বাদ দিয়ে Edge TTS (সেটিংসে Key দাও)");
+  // Voices without their own Gemini profile (old Edge voices) use the default Gemini voice instead.
+  const geminiProfile = geminiVoiceProfiles[requestedVoice] || geminiVoiceProfiles["maya-zephyr"] || Object.values(geminiVoiceProfiles)[0];
+  if (!geminiVoiceProfiles[requestedVoice]) {
+    trace.push(`Gemini: "${requestedVoice}" ভয়েসের নিজস্ব প্রোফাইল নেই, ডিফল্ট Gemini ভয়েস ব্যবহার হলো`);
   }
 
-  if (geminiProfile && resolveApiKey(userApiKey)) {
-    const aiBeta = new GoogleGenAI({
-      apiKey: resolveApiKey(userApiKey),
-      apiVersion: "v1beta",
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
-      },
-    });
+  const ttsKeys = parseKeys(userApiKey);
+  if (!ttsKeys.length) {
+    trace.push("Gemini: API Key নেই (সেটিংসে Key দাও)");
+  }
+
+  if (geminiProfile && ttsKeys.length) {
+    const aiBetas = ttsKeys.map(
+      (k) =>
+        new GoogleGenAI({
+          apiKey: k,
+          apiVersion: "v1beta",
+          httpOptions: { headers: { "User-Agent": "aistudio-build" } },
+        })
+    );
+    const kids = ttsKeys.map((k) => keyId(k));
 
     const defaultTtsModels = geminiProfile.only25
       ? ["gemini-2.5-flash-preview-tts"]
@@ -507,7 +522,6 @@ async function generateLunaAudio(
         ? ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts", "gemini-2.5-flash-preview-tts"]
         : ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-2.5-flash-preview-tts"];
     let geminiTtsModels = defaultTtsModels;
-    const kid = keyId(userApiKey);
     if (preferredTtsModel) {
       if (geminiProfile.only25 && preferredTtsModel.startsWith("gemini-3.8")) {
         trace.push(`পছন্দের মডেল ${preferredTtsModel} এই ভয়েসের জন্য বাদ (ভয়েসটি শুধু 2.5 মডেলে আছে)`);
@@ -528,9 +542,13 @@ async function generateLunaAudio(
       geminiProfile.styleByPersonality[_personality] || geminiProfile.styleByPersonality.sweet;
 
     for (const ttsModel of geminiTtsModels) {
+     for (let ki = 0; ki < ttsKeys.length; ki++) {
+      const kid = kids[ki];
+      const aiBeta = aiBetas[ki];
+      const ktag = ttsKeys.length > 1 ? ` [Key ${ki + 1}]` : "";
       const blockedUntil = ttsModelCooldownUntil.get(`${kid}:${ttsModel}`) || 0;
       if (blockedUntil > now && ttsModel !== preferredTtsModel) {
-        trace.push(`${ttsModel}: বাদ (কোটা/অনুপস্থিত, ~${Math.ceil((blockedUntil - now) / 60000)} মিনিট পর আবার চেষ্টা)`);
+        trace.push(`${ttsModel}${ktag}: বাদ (কোটা/অনুপস্থিত, ~${Math.ceil((blockedUntil - now) / 60000)} মিনিট পর আবার চেষ্টা)`);
         continue;
       }
       const attemptStart = Date.now();
@@ -564,7 +582,7 @@ async function generateLunaAudio(
           const wavBase64 = wrapPcmAsWavIfNeeded(inlineData.data, inlineData.mimeType);
           console.log(`[TTS Engine] Success with ${ttsModel} (${targetGeminiVoice} for ${requestedVoice}), wav bytes:`, wavBase64.length);
           cacheAudio(cacheKey, wavBase64);
-          trace.push(`${ttsModel}: OK (${targetGeminiVoice}, ${Date.now() - attemptStart}ms)`);
+          trace.push(`${ttsModel}${ktag}: OK (${targetGeminiVoice}, ${Date.now() - attemptStart}ms)`);
           return {
             audioBase64: wavBase64,
             engine: ttsModel,
@@ -572,10 +590,10 @@ async function generateLunaAudio(
             trace,
           };
         }
-        trace.push(`${ttsModel}: অডিও ডেটা আসেনি`);
+        trace.push(`${ttsModel}${ktag}: অডিও ডেটা আসেনি`);
       } catch (err: any) {
         trace.push(
-          `${ttsModel}: ব্যর্থ (${err?.status || err?.code || "error"}) ${String(err?.message || err || "").slice(0, 120)}`
+          `${ttsModel}${ktag}: ব্যর্থ (${err?.status || err?.code || "error"}) ${String(err?.message || err || "").slice(0, 120)}`
         );
         const msg = String(err?.message || err || "");
         const isQuotaOrRateLimit =
@@ -597,146 +615,11 @@ async function generateLunaAudio(
           console.warn(`[TTS Engine] ${ttsModel} (${targetGeminiVoice}) notice:`, `${err?.status || err?.code || ""} ${msg.slice(0, 180)}`);
         }
       }
+     }
     }
   }
 
-  // Distinct EdgeTTS voice + pitch/rate profiles per voice selection so every option sounds unmistakably different
-  // NOTE: Edge neural voices sound robotic/chipmunk-like when pitch is pushed far from default,
-  // so every profile stays within a small, natural range (about +-10Hz, +-6% rate).
-  let targetVoice = "bn-BD-NabanitaNeural";
-  let basePitchHz = 2;
-  let baseRatePct = 0;
-
-  if (requestedVoice === "bn-BD-NabanitaNeural") {
-    targetVoice = "bn-BD-NabanitaNeural";
-    basePitchHz = 10;
-    baseRatePct = 4;
-  } else if (requestedVoice === "bn-IN-TanishaaNeural") {
-    targetVoice = "bn-IN-TanishaaNeural";
-    basePitchHz = 8;
-    baseRatePct = 2;
-  } else if (requestedVoice === "maya-zephyr") {
-    targetVoice = "bn-IN-TanishaaNeural";
-    basePitchHz = 14;
-    baseRatePct = 3;
-  } else if (requestedVoice === "maya-leda" || requestedVoice === "maya-kore") {
-    targetVoice = "bn-BD-NabanitaNeural";
-    basePitchHz = 16;
-    baseRatePct = 8;
-  } else if (requestedVoice === "maya-aoede") {
-    targetVoice = "bn-IN-TanishaaNeural";
-    basePitchHz = 10;
-    baseRatePct = 6;
-  } else if (requestedVoice === "maya-laomedeia") {
-    targetVoice = "bn-BD-NabanitaNeural";
-    basePitchHz = 12;
-    baseRatePct = 10;
-  } else if (requestedVoice === "maya-achernar") {
-    targetVoice = "bn-BD-NabanitaNeural";
-    basePitchHz = 8;
-    baseRatePct = -2;
-  } else if (requestedVoice === "maya-vindemiatrix" || requestedVoice === "Vindemiatrix") {
-    targetVoice = "bn-BD-NabanitaNeural";
-    basePitchHz = 0;
-    baseRatePct = -3;
-  } else if (requestedVoice === "en-IN-NeerjaNeural") {
-    targetVoice = "en-IN-NeerjaNeural";
-    basePitchHz = 4;
-    baseRatePct = 1;
-  }
-
-  // Subtle personality nuance layered on top of each voice's base character
-  let personalityPitchDelta = 0;
-  let personalityRateDelta = 0;
-  if (_personality === "empathetic") {
-    personalityPitchDelta = -1;
-    personalityRateDelta = -3;
-  } else if (_personality === "sassy") {
-    personalityPitchDelta = 2;
-    personalityRateDelta = 3;
-  } else if (_personality === "witty") {
-    personalityPitchDelta = 1;
-    personalityRateDelta = 2;
-  }
-
-  const finalPitchHz = basePitchHz + personalityPitchDelta;
-  const finalRatePct = baseRatePct + personalityRateDelta;
-  const targetPitch = `${finalPitchHz >= 0 ? "+" : ""}${finalPitchHz}Hz`;
-  const targetRate = `${finalRatePct >= 0 ? "+" : ""}${finalRatePct}%`;
-
-  // Add subtle natural breathing pauses on Bengali punctuation for smoother prosody
-  const naturalBengaliText = cleanText
-    .replace(/\.{2,}|…/g, ", ")
-    .replace(/—/g, ", ")
-    .replace(/।/g, "। ")
-    .replace(/!/g, "! ")
-    .replace(/\?/g, "? ")
-    .replace(/,/g, ", ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const tts = new EdgeTTS({
-        voice: targetVoice,
-        lang: targetVoice.startsWith("bn-IN") ? "bn-IN" : targetVoice.startsWith("en-IN") ? "en-IN" : "bn-BD",
-        pitch: targetPitch,
-        rate: targetRate,
-      });
-
-      const chunks: Buffer[] = [];
-      for await (const chunk of tts.streamAudio(naturalBengaliText)) {
-        if (Buffer.isBuffer(chunk)) {
-          chunks.push(chunk);
-        }
-      }
-
-      if (chunks.length > 0) {
-        const totalBuffer = Buffer.concat(chunks);
-        const base64Audio = totalBuffer.toString("base64");
-        // Audio produced as a stand-in for a Gemini voice (quota/outage) must not be cached under
-        // that voice, otherwise it would keep being served after Gemini recovers.
-        if (!geminiProfile) cacheAudio(cacheKey, base64Audio);
-        trace.push(`edge-tts: OK (${targetVoice}, ${targetPitch}, ${targetRate})`);
-        return {
-          audioBase64: base64Audio,
-          engine: "edge-tts",
-          voiceUsed: `${targetVoice} (${targetPitch}, ${targetRate})`,
-          trace,
-        };
-      }
-    } catch (err: any) {
-      console.warn(`[TTS Engine] Error with ${targetVoice} (attempt ${attempt + 1}):`, err?.message || err);
-      trace.push(`edge-tts ${targetVoice} চেষ্টা ${attempt + 1}: ব্যর্থ ${String(err?.message || err || "").slice(0, 100)}`);
-    }
-  }
-
-  // Fallback to Tanishaa/Nabanita if primary failed
-  try {
-    const fallbackVoice = targetVoice === "bn-BD-NabanitaNeural" ? "bn-IN-TanishaaNeural" : "bn-BD-NabanitaNeural";
-    const ttsFallback = new EdgeTTS({
-      voice: fallbackVoice,
-      lang: fallbackVoice.startsWith("bn-IN") ? "bn-IN" : "bn-BD",
-      pitch: targetPitch,
-      rate: targetRate,
-    });
-    const chunks: Buffer[] = [];
-    for await (const chunk of ttsFallback.streamAudio(naturalBengaliText)) {
-      if (Buffer.isBuffer(chunk)) chunks.push(chunk);
-    }
-    if (chunks.length > 0) {
-      trace.push(`edge-tts-fallback: OK (${fallbackVoice})`);
-      return {
-        audioBase64: Buffer.concat(chunks).toString("base64"),
-        engine: "edge-tts-fallback",
-        voiceUsed: `${fallbackVoice} (${targetPitch}, ${targetRate})`,
-        trace,
-      };
-    }
-  } catch (err: any) {
-    trace.push(`edge-tts-fallback: ব্যর্থ ${String(err?.message || err || "").slice(0, 100)}`);
-  }
-
+    // No Edge/robotic fallback any more: if every Gemini model and key failed, the app falls back to the device voice.
   // Last resort: caller still wants the attempt log even though no audio was produced.
   lastFailedTrace = trace;
   return null;
@@ -766,11 +649,11 @@ app.post("/api/gemini/response", async (req, res) => {
 // API Route: Generate Speech / Audio (TTS)
 // Clears this key's model "rest" lists (called by the Model Lab after a successful test)
 app.post("/api/gemini/reset-cooldowns", (req, res) => {
-  const prefix = `${keyId(req.header("x-gemini-key"))}:`;
+  const prefixes = parseKeys(req.header("x-gemini-key")).map((k) => `${keyId(k)}:`);
   let cleared = 0;
   for (const map of [ttsModelCooldownUntil, textModelCooldownUntil]) {
     for (const k of Array.from(map.keys())) {
-      if (k.startsWith(prefix)) { map.delete(k); cleared++; }
+      if (prefixes.some((pf) => k.startsWith(pf))) { map.delete(k); cleared++; }
     }
   }
   res.json({ cleared });

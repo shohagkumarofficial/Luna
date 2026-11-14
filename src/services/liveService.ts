@@ -1,4 +1,4 @@
-import { getApiKey } from "../utils/apiKey";
+import { getApiKeys } from "../utils/apiKey";
 import { getModelPref } from "../utils/modelPrefs";
 
 export class LiveSessionManager {
@@ -106,7 +106,7 @@ export class LiveSessionManager {
 
       this.ws.onopen = () => {
         console.log("[Client] WebSocket live bridge connected");
-        this.ws?.send(JSON.stringify({ type: "config", personality: this.personality, apiKey: getApiKey(), textModel: getModelPref("text") }));
+        this.ws?.send(JSON.stringify({ type: "config", personality: this.personality, apiKey: getApiKeys().join(","), textModel: getModelPref("text") }));
       };
 
       this.ws.onmessage = (event) => {

@@ -5,7 +5,7 @@ import { playPCM } from "../utils/audioUtils";
 import { speakLuna, stopLunaSpeech } from "../utils/speech";
 import { ThemeId, THEMES, THEME_OPTIONS } from "../utils/theme";
 import {
-  getApiKey, setApiKey, clearApiKey,
+  getApiKey, getApiKeyText, getApiKeys, setApiKey, clearApiKey,
   getElevenKey, getElevenVoiceId, getElevenModel, setElevenSettings, clearElevenSettings,
   DEFAULT_ELEVEN_VOICE, DEFAULT_ELEVEN_MODEL,
 } from "../utils/apiKey";
@@ -191,7 +191,7 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
   const [testingId, setTestingId] = useState<string | null>(null);
   const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
   const testRunRef = useRef(0);
-  const [keyInput, setKeyInput] = useState<string>(() => getApiKey());
+  const [keyInput, setKeyInput] = useState<string>(() => getApiKeyText());
   const [hasSavedKey, setHasSavedKey] = useState<boolean>(() => Boolean(getApiKey()));
   const [elKey, setElKey] = useState<string>(() => getElevenKey());
   const [elVoice, setElVoice] = useState<string>(() => getElevenVoiceId());
@@ -291,22 +291,23 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
                     : "bg-amber-500/20 text-amber-300 border-amber-500/30"
                 }`}
               >
-                {hasSavedKey ? "যোগ করা আছে" : "যোগ করা হয়নি"}
+                {hasSavedKey ? `যোগ করা আছে (${getApiKeys().length}টি)` : "যোগ করা হয়নি"}
               </span>
             </div>
             <div className="p-3.5 rounded-2xl border bg-white/5 border-white/10 space-y-2.5">
               <div className="flex items-center gap-2">
-                <input
-                  type={showKey ? "text" : "password"}
+                <textarea
+                  rows={3}
                   value={keyInput}
                   onChange={(e) => {
                     setKeyInput(e.target.value);
                     setKeySaved(false);
                   }}
-                  placeholder="AIza... (আপনার API Key পেস্ট করুন)"
+                  placeholder={"AIza... (প্রতি লাইনে একটা Key)\nএকাধিক Key দিলে একটার লিমিট শেষ হলে লুনা নিজে পরেরটায় যাবে"}
                   autoComplete="off"
                   spellCheck={false}
-                  className="flex-1 min-w-0 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/30 outline-none focus:border-white/30"
+                  style={showKey ? undefined : ({ WebkitTextSecurity: "disc" } as React.CSSProperties)}
+                  className="flex-1 min-w-0 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/30 outline-none focus:border-white/30 font-mono resize-none"
                 />
                 <button
                   type="button"

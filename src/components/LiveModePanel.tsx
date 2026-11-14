@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { X, Mic, MicOff, Radio } from "lucide-react";
-import { getApiKey } from "../utils/apiKey";
+import { getApiKeys } from "../utils/apiKey";
 import { getModelPref } from "../utils/modelPrefs";
 import { addLog } from "../utils/voiceLog";
 import { GeminiLiveClient, LiveState } from "../services/geminiLive";
@@ -40,13 +40,19 @@ export const LiveModePanel: React.FC<Props> = ({ isOpen, onClose, onOpenLab }) =
   };
 
   const start = async () => {
-    const key = getApiKey();
-    if (!key) {
+    if (!getApiKeys().length) {
       setError("আগে সেটিংস থেকে Gemini API Key যোগ করো।");
       return;
     }
     setError("");
     setTurns([{ user: "", luna: "" }]);
+    await startWithKey(0);
+  };
+
+  // If connecting fails (e.g. quota on this key), the next saved key is tried automatically.
+  const startWithKey = async (ki: number) => {
+    const keys = getApiKeys();
+    const key = keys[ki];
     const t0 = performance.now();
     let first = true;
     const client = new GeminiLiveClient(key, model, voice, {
@@ -61,8 +67,12 @@ export const LiveModePanel: React.FC<Props> = ({ isOpen, onClose, onOpenLab }) =
       onLunaText: (t) => setTurns((a) => { const c = a.slice(); c[c.length - 1] = { ...c[c.length - 1], luna: t }; return c; }),
       onTurnEnd: () => setTurns((a) => [...a, { user: "", luna: "" }]),
       onError: (msg) => {
+        addLog("error", `Live ব্যর্থ${keys.length > 1 ? ` [Key ${ki + 1}]` : ""}`, [model, msg]);
+        if (first && ki + 1 < keys.length) {
+          startWithKey(ki + 1);
+          return;
+        }
         setError(msg);
-        addLog("error", "Live ব্যর্থ", [model, msg]);
       },
     });
     clientRef.current = client;

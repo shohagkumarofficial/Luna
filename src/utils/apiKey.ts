@@ -3,18 +3,33 @@ import { modelHeaders } from "./modelPrefs";
 // Luna server with each request. It is never saved on the server.
 const STORAGE_KEY = "luna_gemini_api_key";
 
-export function getApiKey(): string {
+// Several keys can be saved (one per line). When a model's quota ends on one key,
+// Luna automatically moves to the next key.
+export function parseKeys(text: string): string[] {
+  return Array.from(new Set((text || "").split(/[\s,;]+/).map((k) => k.trim()).filter(Boolean))).slice(0, 6);
+}
+
+export function getApiKeys(): string[] {
   try {
-    return localStorage.getItem(STORAGE_KEY) || "";
+    return parseKeys(localStorage.getItem(STORAGE_KEY) || "");
   } catch {
-    return "";
+    return [];
   }
 }
 
-export function setApiKey(key: string): void {
+// First key (used for existence checks and the Model Lab)
+export function getApiKey(): string {
+  return getApiKeys()[0] || "";
+}
+
+export function getApiKeyText(): string {
+  return getApiKeys().join("\n");
+}
+
+export function setApiKey(text: string): void {
   try {
-    const trimmed = key.trim();
-    if (trimmed) localStorage.setItem(STORAGE_KEY, trimmed);
+    const keys = parseKeys(text);
+    if (keys.length) localStorage.setItem(STORAGE_KEY, keys.join("\n"));
     else localStorage.removeItem(STORAGE_KEY);
   } catch {}
 }
@@ -67,8 +82,8 @@ const ascii = (v: string) => v.replace(/[^\x21-\x7E]/g, "");
 
 export function apiKeyHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
-  const key = getApiKey();
-  if (key) headers["x-gemini-key"] = ascii(key);
+  const keys = getApiKeys();
+  if (keys.length) headers["x-gemini-key"] = keys.map(ascii).join(",");
   const elKey = getElevenKey();
   if (elKey) {
     headers["x-elevenlabs-key"] = ascii(elKey);
