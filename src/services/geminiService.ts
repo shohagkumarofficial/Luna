@@ -40,8 +40,8 @@ export async function getLunaResponse(
     const data = await response.json();
     addLog(
       data.noKey ? "warn" : data.text ? "ok" : "warn",
-      data.noKey ? "উত্তর: Gemini Key নেই, তাই Key চাওয়ার বার্তা দেখানো হলো" : data.text ? "উত্তর: Gemini থেকে এসেছে" : "উত্তর খালি, অফলাইন উত্তর ব্যবহার হলো",
-      [getApiKey() ? "API Key যোগ করা আছে" : "API Key যোগ করা নেই"]
+      data.noKey ? "উত্তর: Gemini Key নেই, তাই Key চাওয়ার বার্তা দেখানো হলো" : data.text ? `উত্তর: ${data.model || "Gemini"} থেকে এসেছে` : "উত্তর খালি, অফলাইন উত্তর ব্যবহার হলো",
+      [getApiKey() ? "API Key যোগ করা আছে" : "API Key যোগ করা নেই", ...(Array.isArray(data.trace) ? data.trace : [])]
     );
     return data.text || getOfflineLunaResponse(prompt, personality);
   } catch (error: any) {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Mic, MicOff, Loader2, Volume2, VolumeX, Keyboard, Send, Trash2, Image as ImageIcon, Smartphone, MessageSquare, X, Sparkles, Heart, Flame, Smile, ScrollText } from "lucide-react";
+import { Mic, MicOff, Loader2, Volume2, VolumeX, Keyboard, Send, Trash2, Image as ImageIcon, Smartphone, MessageSquare, X, Sparkles, Heart, Flame, Smile, ScrollText, FlaskConical } from "lucide-react";
 import { getLunaResponse, getLunaAudio, resetLunaSession } from "./services/geminiService";
 import { processCommand } from "./services/commandService";
 import { LiveSessionManager } from "./services/liveService";
@@ -8,6 +8,7 @@ import PermissionModal from "./components/PermissionModal";
 import { APKModal } from "./components/APKModal";
 import { VoiceSettingsModal, PersonalityId, PERSONALITIES, SpeechLangCode } from "./components/VoiceSettingsModal";
 import { VoiceLogPanel } from "./components/VoiceLogPanel";
+import { ModelLabPanel } from "./components/ModelLabPanel";
 import { OfflineIndicator } from "./components/OfflineIndicator";
 import { StreamingText } from "./components/StreamingText";
 import { usePWAInstall } from "./hooks/usePWAInstall";
@@ -119,6 +120,7 @@ export default function App() {
   const [showChatDrawer, setShowChatDrawer] = useState(false);
   const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [showLogPanel, setShowLogPanel] = useState(false);
+  const [showModelLab, setShowModelLab] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState<string>(() => {
     return localStorage.getItem("luna_voice_choice") || "maya-leda";
   });
@@ -517,6 +519,7 @@ export default function App() {
       />
 
       <VoiceLogPanel isOpen={showLogPanel} onClose={() => setShowLogPanel(false)} />
+      <ModelLabPanel isOpen={showModelLab} onClose={() => setShowModelLab(false)} />
 
       <VoiceSettingsModal
         isOpen={showVoiceModal}
@@ -551,6 +554,15 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* Model Lab button: test and pick models */}
+          <button
+            onClick={() => setShowModelLab(true)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold tracking-wide transition-all border shadow-lg active:scale-95 ${t.settingsBtn}`}
+            title="মডেল ল্যাব: মডেল টেস্ট করে বেছে নিন"
+          >
+            <FlaskConical size={14} className={t.settingsIcon} />
+            <span className="hidden sm:inline">মডেল</span>
+          </button>
           {/* Diagnostic log button */}
           <button
             onClick={() => setShowLogPanel(true)}

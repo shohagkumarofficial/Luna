@@ -1,5 +1,6 @@
 import express from "express";
 import fs from "fs";
+import { createHash } from "crypto";
 import http from "http";
 import path from "path";
 import zlib from "zlib";
@@ -28,6 +29,35 @@ function resolveApiKey(userKey?: string | null): string | undefined {
   const k = (userKey || "").trim();
   return k || process.env.GEMINI_API_KEY || undefined;
 }
+
+// Cooldowns are tracked per API key + model, so one visitor's quota problem never blocks another's.
+function keyId(userKey?: string | null): string {
+  return createHash("sha1").update(resolveApiKey(userKey) || "").digest("hex").slice(0, 10);
+}
+
+// Model names coming from the browser are validated before use.
+function sanitizeModel(v?: string | null): string | undefined {
+  const t = (v || "").trim();
+  return /^[A-Za-z0-9._-]{2,80}$/.test(t) ? t : undefined;
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(Object.assign(new Error("timeout"), { status: "timeout" })), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); }
+    );
+  });
+}
+
+interface ChatResult {
+  text: string;
+  model: string | null;
+  trace: string[];
+  noKey?: boolean;
+}
+const textModelCooldownUntil = new Map<string, number>();
 
 const NO_KEY_REPLY =
   "সোহাগ, আমার কথা বলার জন্য Gemini API Key লাগবে। উপরে সেটিংস থেকে API Key যোগ করে দাও, তারপর আমরা গল্প করবো!";
@@ -74,14 +104,17 @@ ${toneBlock}
 }
 
 // Core helper: generate text response with fallback models
-async function generateLunaResponse(
+async function generateLunaResponseDetailed(
   prompt: string,
   history: Array<{ sender: "user" | "luna"; text: string }> = [],
   imageBase64?: string,
   personality = "sweet",
-  userApiKey?: string | null
-): Promise<string> {
-  if (!resolveApiKey(userApiKey)) return NO_KEY_REPLY;
+  userApiKey?: string | null,
+  preferredModel?: string | null
+): Promise<ChatResult> {
+  if (!resolveApiKey(userApiKey)) {
+    return { text: NO_KEY_REPLY, model: null, trace: ["Gemini Key নেই"], noKey: true };
+  }
   const ai = getGenAIClient(userApiKey);
 
   const parts: any[] = [{ text: prompt || "What do you see?" }];
@@ -123,41 +156,78 @@ async function generateLunaResponse(
     ? [...formattedHistory, { role: "user", parts }]
     : [{ role: "user", parts }];
 
-  const candidateModels = [
+  const defaultModels = [
     "gemini-4-hydrogen",
     "gemini-2.5-flash",
     "gemini-3.1-flash-lite",
     "gemini-3.8-flash",
   ];
+  const chosen = sanitizeModel(preferredModel);
+  const candidateModels = chosen ? [chosen, ...defaultModels.filter((m) => m !== chosen)] : defaultModels;
 
+  const trace: string[] = [];
+  const systemInstruction = buildSystemInstruction(personality);
+  const kid = keyId(userApiKey);
+  const deadline = Date.now() + 45000; // never keep the user waiting more than ~45s in total
   let lastError: any = null;
 
-  const candidateErrors: Record<string, any> = {};
-  const systemInstruction = buildSystemInstruction(personality);
-
   for (const model of candidateModels) {
+    const remaining = deadline - Date.now();
+    if (remaining < 3000) {
+      trace.push("সময়সীমা শেষ (৪৫ সেকেন্ড), বাকি মডেল চেষ্টা করা হয়নি");
+      break;
+    }
+    const blockedUntil = textModelCooldownUntil.get(`${kid}:${model}`) || 0;
+    if (blockedUntil > Date.now()) {
+      trace.push(`${model}: বাদ (সমস্যার কারণে ~${Math.ceil((blockedUntil - Date.now()) / 60000)} মিনিট বিশ্রামে)`);
+      continue;
+    }
+    const started = Date.now();
     try {
-      const response = await ai.models.generateContent({
-        model,
-        contents,
-        config: {
-          systemInstruction,
-        },
-      });
+      const response = await withTimeout(
+        ai.models.generateContent({ model, contents, config: { systemInstruction } }),
+        Math.min(20000, remaining)
+      );
       if (response && response.text) {
-        return response.text;
+        trace.push(`${model}: OK (${Date.now() - started}ms)`);
+        return { text: response.text, model, trace };
       }
+      trace.push(`${model}: খালি উত্তর`);
     } catch (err: any) {
       lastError = err;
-      candidateErrors[model] = { status: err?.status, msg: err?.message };
+      const status = err?.status;
+      const msg = String(err?.message || err || "").replace(/\s+/g, " ").slice(0, 110);
+      trace.push(`${model}: ব্যর্থ (${status || "error"}) ${msg}`);
+      const cool =
+        status === "timeout" ? 2 * 60000
+        : status === 403 || status === 404 ? 10 * 60000
+        : status === 429 ? 3 * 60000
+        : typeof status === "number" && status >= 500 ? 60000
+        : 0;
+      if (cool) textModelCooldownUntil.set(`${kid}:${model}`, Date.now() + cool);
     }
   }
 
   if (lastError?.status === 429 || lastError?.message?.includes("429") || lastError?.message?.includes("quota")) {
-    return "আরে সোহাগ! তোমার API কি-এর ফ্রি কোটা লিমিট সাময়িকভাবে শেষ হয়েছে। একটু পরে আবার চেষ্টা করো, আমি এখানেই আছি!";
+    return {
+      text: "আরে সোহাগ! তোমার API কি-এর ফ্রি কোটা লিমিট সাময়িকভাবে শেষ হয়েছে। একটু পরে আবার চেষ্টা করো, আমি এখানেই আছি!",
+      model: null,
+      trace,
+    };
   }
 
-  return "উফ, সোহাগ! একটু নেটওয়ার্ক সমস্যা হয়েছে। আবার বলো, শুনছি!";
+  return { text: "উফ, সোহাগ! একটু নেটওয়ার্ক সমস্যা হয়েছে। আবার বলো, শুনছি!", model: null, trace };
+}
+
+async function generateLunaResponse(
+  prompt: string,
+  history: Array<{ sender: "user" | "luna"; text: string }> = [],
+  imageBase64?: string,
+  personality = "sweet",
+  userApiKey?: string | null,
+  preferredModel?: string | null
+): Promise<string> {
+  return (await generateLunaResponseDetailed(prompt, history, imageBase64, personality, userApiKey, preferredModel)).text;
 }
 
 // In-memory audio cache and model rate-limit cooldowns to prevent rate-limits and ensure instant playback
@@ -241,7 +311,8 @@ async function generateLunaAudio(
   requestedVoice = "bn-BD-NabanitaNeural",
   _personality = "sweet",
   userApiKey?: string | null,
-  eleven?: ElevenOptions
+  eleven?: ElevenOptions,
+  preferredTtsModel?: string
 ): Promise<GeneratedAudioResult | null> {
   const cleanText = text
     .replace(/\*[^*]+\*/g, "") // remove *sigh*, *dramatic pause*
@@ -258,7 +329,7 @@ async function generateLunaAudio(
   // Human-readable record of every engine attempt, returned to the app's log panel.
   const trace: string[] = [];
 
-  const cacheKey = `${requestedVoice}:${_personality}:${cleanText}`;
+  const cacheKey = `${requestedVoice}:${_personality}:${preferredTtsModel || ""}:${cleanText}`;
   if (!eleven && audioCache.has(cacheKey)) {
     const cached = audioCache.get(cacheKey)!;
     return {
@@ -423,18 +494,27 @@ async function generateLunaAudio(
       },
     });
 
-    const geminiTtsModels = geminiProfile.only25
+    const defaultTtsModels = geminiProfile.only25
       ? ["gemini-2.5-flash-preview-tts"]
       : geminiProfile.preferFlagship38
         ? ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts", "gemini-2.5-flash-preview-tts"]
         : ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-2.5-flash-preview-tts"];
+    let geminiTtsModels = defaultTtsModels;
+    const kid = keyId(userApiKey);
+    if (preferredTtsModel) {
+      if (geminiProfile.only25 && preferredTtsModel.startsWith("gemini-3.8")) {
+        trace.push(`পছন্দের মডেল ${preferredTtsModel} এই ভয়েসের জন্য বাদ (ভয়েসটি শুধু 2.5 মডেলে আছে)`);
+      } else {
+        geminiTtsModels = [preferredTtsModel, ...defaultTtsModels.filter((m) => m !== preferredTtsModel)];
+      }
+    }
 
     const now = Date.now();
     const styleCue =
       geminiProfile.styleByPersonality[_personality] || geminiProfile.styleByPersonality.sweet;
 
     for (const ttsModel of geminiTtsModels) {
-      const blockedUntil = ttsModelCooldownUntil.get(ttsModel) || 0;
+      const blockedUntil = ttsModelCooldownUntil.get(`${kid}:${ttsModel}`) || 0;
       if (blockedUntil > now) {
         trace.push(`${ttsModel}: বাদ (কোটা/অনুপস্থিত, ~${Math.ceil((blockedUntil - now) / 60000)} মিনিট পর আবার চেষ্টা)`);
         continue;
@@ -493,11 +573,11 @@ async function generateLunaAudio(
           const retryMatch = msg.match(/"retryDelay"\s*:\s*"(\d+)s"/i);
           const retrySec = retryMatch ? parseInt(retryMatch[1], 10) : 1800;
           const cooldownMs = Math.min(Math.max(retrySec, 60), 6 * 3600) * 1000;
-          ttsModelCooldownUntil.set(ttsModel, Date.now() + cooldownMs);
+          ttsModelCooldownUntil.set(`${kid}:${ttsModel}`, Date.now() + cooldownMs);
           console.log(`[TTS Engine] ${ttsModel} quota reached; switching cleanly to next voice.`);
         } else if (err?.status === 404 || err?.code === 404 || /NOT_FOUND|not found/i.test(msg)) {
           // Model unavailable for this key/API version: skip it for a while instead of retrying every request
-          ttsModelCooldownUntil.set(ttsModel, Date.now() + 60 * 60 * 1000);
+          ttsModelCooldownUntil.set(`${kid}:${ttsModel}`, Date.now() + 60 * 60 * 1000);
           console.warn(`[TTS Engine] ${ttsModel} not available, skipping for 1h.`);
         } else {
           console.warn(`[TTS Engine] ${ttsModel} (${targetGeminiVoice}) notice:`, `${err?.status || err?.code || ""} ${msg.slice(0, 180)}`);
@@ -657,10 +737,10 @@ app.post("/api/gemini/reset", (req, res) => {
 app.post("/api/gemini/response", async (req, res) => {
   try {
     const { prompt, history = [], imageBase64, personality = "sweet" } = req.body;
-    const replyText = await generateLunaResponse(
-      prompt, history, imageBase64, personality, req.header("x-gemini-key")
+    const chat = await generateLunaResponseDetailed(
+      prompt, history, imageBase64, personality, req.header("x-gemini-key"), sanitizeModel(req.header("x-text-model"))
     );
-    res.json({ text: replyText, noKey: replyText === NO_KEY_REPLY });
+    res.json({ text: chat.text, noKey: Boolean(chat.noKey), model: chat.model, trace: chat.trace });
   } catch (error: any) {
     res.status(500).json({
       text: "উফ, সার্ভারে একটু সমস্যা হয়েছে সোহাগ। আবার চেষ্টা করো!",
@@ -677,7 +757,7 @@ app.post("/api/gemini/audio", async (req, res) => {
       return res.status(400).json({ error: "Text is required" });
     }
     lastFailedTrace = [];
-    const result = await generateLunaAudio(text, voice, personality, req.header("x-gemini-key"), readElevenOptions(req));
+    const result = await generateLunaAudio(text, voice, personality, req.header("x-gemini-key"), readElevenOptions(req), sanitizeModel(req.header("x-tts-model")));
     const audioBase64 = result?.audioBase64 || null;
     const isWav = Boolean(audioBase64 && audioBase64.startsWith("UklGR"));
     res.json({
@@ -837,6 +917,7 @@ wss.on("connection", async (clientWs: WebSocket) => {
   let conversationHistory: Array<{ sender: "user" | "luna"; text: string }> = [];
   let currentPersonality = "sweet";
   let userApiKey = "";
+  let userTextModel: string | undefined;
 
   clientWs.on("message", async (data) => {
     try {
@@ -845,10 +926,12 @@ wss.on("connection", async (clientWs: WebSocket) => {
       if (msg.type === "config") {
         if (typeof msg.personality === "string") currentPersonality = msg.personality;
         if (typeof msg.apiKey === "string") userApiKey = msg.apiKey;
+        if (typeof msg.textModel === "string") userTextModel = sanitizeModel(msg.textModel);
         return;
       }
 
       const activePersonality = typeof msg.personality === "string" ? msg.personality : currentPersonality;
+      if (typeof msg.textModel === "string") userTextModel = sanitizeModel(msg.textModel);
 
       if (msg.type === "text" && msg.text) {
         const userPrompt = msg.text.trim();
@@ -864,13 +947,13 @@ wss.on("connection", async (clientWs: WebSocket) => {
         }
 
         // 2. Chit-Chat response with Luna's selected personality tone
-        const replyText = await generateLunaResponse(userPrompt, conversationHistory, undefined, activePersonality, userApiKey);
+        const replyText = await generateLunaResponse(userPrompt, conversationHistory, undefined, activePersonality, userApiKey, userTextModel);
         conversationHistory.push({ sender: "luna", text: replyText });
 
         safeSend({ type: "transcript", sender: "luna", text: replyText });
       } else if (msg.type === "image" && msg.image) {
         const caption = msg.text || "What do you see?";
-        const replyText = await generateLunaResponse(caption, conversationHistory, msg.image, activePersonality, userApiKey);
+        const replyText = await generateLunaResponse(caption, conversationHistory, msg.image, activePersonality, userApiKey, userTextModel);
         conversationHistory.push({ sender: "luna", text: replyText });
 
         safeSend({ type: "transcript", sender: "luna", text: replyText });

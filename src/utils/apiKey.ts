@@ -1,3 +1,4 @@
+import { modelHeaders } from "./modelPrefs";
 // Gemini API key is stored only in this browser (localStorage) and sent to the
 // Luna server with each request. It is never saved on the server.
 const STORAGE_KEY = "luna_gemini_api_key";
@@ -76,5 +77,5 @@ export function apiKeyHeaders(): Record<string, string> {
     if (v) headers["x-elevenlabs-voice"] = v;
     if (m) headers["x-elevenlabs-model"] = m;
   }
-  return headers;
+  return { ...headers, ...modelHeaders() };
 }

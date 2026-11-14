@@ -1,4 +1,5 @@
 import { getApiKey } from "../utils/apiKey";
+import { getModelPref } from "../utils/modelPrefs";
 
 export class LiveSessionManager {
   private ws: WebSocket | null = null;
@@ -105,7 +106,7 @@ export class LiveSessionManager {
 
       this.ws.onopen = () => {
         console.log("[Client] WebSocket live bridge connected");
-        this.ws?.send(JSON.stringify({ type: "config", personality: this.personality, apiKey: getApiKey() }));
+        this.ws?.send(JSON.stringify({ type: "config", personality: this.personality, apiKey: getApiKey(), textModel: getModelPref("text") }));
       };
 
       this.ws.onmessage = (event) => {
@@ -386,7 +387,7 @@ export class LiveSessionManager {
   public setPersonality(personality: string) {
     this.personality = personality;
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: "config", personality }));
+      this.ws.send(JSON.stringify({ type: "config", personality, textModel: getModelPref("text") }));
     }
   }
 
@@ -408,7 +409,7 @@ export class LiveSessionManager {
 
   sendText(text: string) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: "text", text, personality: this.personality }));
+      this.ws.send(JSON.stringify({ type: "text", text, personality: this.personality, textModel: getModelPref("text") }));
     }
   }
 
