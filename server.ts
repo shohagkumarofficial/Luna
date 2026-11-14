@@ -319,7 +319,7 @@ async function generateLunaAudio(
           trace.push("elevenlabs: অডিও ডেটা আসেনি");
         } else {
           const body = (await r.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 160);
-          trace.push(`elevenlabs: ব্যর্থ (${r.status}) ${body}`);
+          trace.push(`elevenlabs: ব্যর্থ (${r.status}) [voice ${eleven.voiceId}, model ${eleven.model}] ${body}`);
           if (/library voices|paid_plan_required/i.test(body)) {
             trace.push("ইঙ্গিত: ফ্রি প্ল্যানে লাইব্রেরি ভয়েস চলে না। ElevenLabs-এর My Voices-এর নিজের ভয়েসের Voice ID সেটিংসে দাও।");
           }
@@ -660,7 +660,7 @@ app.post("/api/gemini/response", async (req, res) => {
     const replyText = await generateLunaResponse(
       prompt, history, imageBase64, personality, req.header("x-gemini-key")
     );
-    res.json({ text: replyText });
+    res.json({ text: replyText, noKey: replyText === NO_KEY_REPLY });
   } catch (error: any) {
     res.status(500).json({
       text: "উফ, সার্ভারে একটু সমস্যা হয়েছে সোহাগ। আবার চেষ্টা করো!",
