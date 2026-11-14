@@ -21,3 +21,10 @@ npm run dev      # http://localhost:3000
 4. Open the site and add your API key from Settings.
 
 Note: the free plan sleeps after ~15 minutes idle (first load can take about a minute).
+
+## Voice engines (priority order)
+1. **ElevenLabs** (optional): add your key in Settings. Bengali needs model `eleven_v3` (default).
+2. **Gemini TTS** (needs a project where Gemini TTS is enabled/billed; a 403 in the Log panel means it is not).
+3. **Edge TTS** (free fallback, only two Bengali voices).
+
+Open the **Log** button in the app to see which engine produced each voice and why a fallback happened.

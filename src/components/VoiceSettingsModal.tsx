@@ -4,7 +4,11 @@ import { getLunaAudio, lastAudioEngine } from "../services/geminiService";
 import { playPCM } from "../utils/audioUtils";
 import { speakLuna, stopLunaSpeech } from "../utils/speech";
 import { ThemeId, THEMES, THEME_OPTIONS } from "../utils/theme";
-import { getApiKey, setApiKey, clearApiKey } from "../utils/apiKey";
+import {
+  getApiKey, setApiKey, clearApiKey,
+  getElevenKey, getElevenVoiceId, getElevenModel, setElevenSettings, clearElevenSettings,
+  DEFAULT_ELEVEN_VOICE, DEFAULT_ELEVEN_MODEL,
+} from "../utils/apiKey";
 
 export type PersonalityId = "sweet" | "witty" | "empathetic" | "sassy";
 export type SpeechLangCode = "bn-BD" | "en-US";
@@ -189,6 +193,12 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
   const testRunRef = useRef(0);
   const [keyInput, setKeyInput] = useState<string>(() => getApiKey());
   const [hasSavedKey, setHasSavedKey] = useState<boolean>(() => Boolean(getApiKey()));
+  const [elKey, setElKey] = useState<string>(() => getElevenKey());
+  const [elVoice, setElVoice] = useState<string>(() => getElevenVoiceId());
+  const [elModel, setElModel] = useState<string>(() => getElevenModel());
+  const [hasElKey, setHasElKey] = useState<boolean>(() => Boolean(getElevenKey()));
+  const [showElKey, setShowElKey] = useState(false);
+  const [elSaved, setElSaved] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [keySaved, setKeySaved] = useState(false);
 
@@ -345,6 +355,107 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
                   aistudio.google.com/apikey
                 </a>{" "}
                 এ যান। Key শুধু আপনার এই ব্রাউজারে থাকে, সার্ভারে সেভ হয় না।
+              </p>
+            </div>
+          </div>
+
+          {/* ElevenLabs API Key Section (optional) */}
+          <div>
+            <div className={`flex items-center justify-between mb-2.5 text-xs font-semibold uppercase tracking-wider ${t.brandSubtitle}`}>
+              <div className="flex items-center gap-1.5">
+                <Volume2 size={14} className={t.settingsIcon} />
+                <span>ElevenLabs ভয়েস (ঐচ্ছিক)</span>
+              </div>
+              <span
+                className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border normal-case tracking-normal ${
+                  hasElKey
+                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
+                    : "bg-white/10 text-white/60 border-white/15"
+                }`}
+              >
+                {hasElKey ? "চালু" : "বন্ধ"}
+              </span>
+            </div>
+            <div className="p-3.5 rounded-2xl border bg-white/5 border-white/10 space-y-2.5">
+              <div className="flex items-center gap-2">
+                <input
+                  type={showElKey ? "text" : "password"}
+                  value={elKey}
+                  onChange={(e) => {
+                    setElKey(e.target.value);
+                    setElSaved(false);
+                  }}
+                  placeholder="ElevenLabs API Key পেস্ট করুন"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="flex-1 min-w-0 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/30 outline-none focus:border-white/30"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowElKey((v) => !v)}
+                  className="p-2 rounded-full bg-white/10 hover:bg-white/15 text-white/70 transition"
+                  title={showElKey ? "লুকান" : "দেখান"}
+                >
+                  {showElKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+              <input
+                type="text"
+                value={elVoice}
+                onChange={(e) => {
+                  setElVoice(e.target.value);
+                  setElSaved(false);
+                }}
+                placeholder={`Voice ID (ঐচ্ছিক, ডিফল্ট ${DEFAULT_ELEVEN_VOICE})`}
+                autoComplete="off"
+                spellCheck={false}
+                className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/30 outline-none focus:border-white/30"
+              />
+              <input
+                type="text"
+                value={elModel}
+                onChange={(e) => {
+                  setElModel(e.target.value);
+                  setElSaved(false);
+                }}
+                placeholder={`Model (ঐচ্ছিক, ডিফল্ট ${DEFAULT_ELEVEN_MODEL})`}
+                autoComplete="off"
+                spellCheck={false}
+                className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/30 outline-none focus:border-white/30"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setElevenSettings(elKey, elVoice, elModel);
+                    setHasElKey(Boolean(elKey.trim()));
+                    setElSaved(true);
+                  }}
+                  className={`px-4 py-1.5 rounded-full text-white font-medium text-xs shadow-md transition active:scale-95 ${t.primaryGradient}`}
+                >
+                  {elSaved ? "সেভ হয়েছে ✓" : "সেভ করুন"}
+                </button>
+                {hasElKey && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearElevenSettings();
+                      setElKey("");
+                      setElVoice("");
+                      setElModel("");
+                      setHasElKey(false);
+                      setElSaved(false);
+                    }}
+                    className="px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 hover:bg-white/15 text-white/85 border border-white/10 transition active:scale-95"
+                  >
+                    মুছুন
+                  </button>
+                )}
+              </div>
+              <p className="text-[11px] text-white/50 leading-relaxed">
+                Key দিলে সব ভয়েসে আগে ElevenLabs ব্যবহার হবে। ব্যর্থ হলে Gemini, তারপর Edge ভয়েসে যাবে।
+                বাংলার জন্য Model <span className="font-mono">eleven_v3</span> লাগে। নিজের পছন্দের কণ্ঠ চাইলে ElevenLabs-এ গিয়ে সেই ভয়েসের ID এখানে দাও।
+                Key শুধু এই ব্রাউজারে থাকে, সার্ভারে সেভ হয় না।
               </p>
             </div>
           </div>

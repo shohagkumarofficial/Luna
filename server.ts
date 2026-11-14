@@ -210,6 +210,29 @@ interface GeneratedAudioResult {
   trace?: string[];
 }
 
+interface ElevenOptions {
+  key: string;
+  voiceId: string;
+  model: string;
+}
+
+const DEFAULT_ELEVEN_VOICE = "21m00Tcm4TlvDq8ikWAM";
+// Eleven v3 lists Bengali; multilingual_v2 / flash_v2_5 do not.
+const DEFAULT_ELEVEN_MODEL = "eleven_v3";
+const elevenCooldownUntil = new Map<string, number>();
+
+function readElevenOptions(req: express.Request): ElevenOptions | undefined {
+  const key = (req.header("x-elevenlabs-key") || "").trim();
+  if (!key) return undefined;
+  const voice = (req.header("x-elevenlabs-voice") || "").trim();
+  const model = (req.header("x-elevenlabs-model") || "").trim();
+  return {
+    key,
+    voiceId: /^[A-Za-z0-9_-]{5,40}$/.test(voice) ? voice : DEFAULT_ELEVEN_VOICE,
+    model: /^[a-z0-9_]{3,40}$/.test(model) ? model : DEFAULT_ELEVEN_MODEL,
+  };
+}
+
 // Attempt log of the most recent TTS call that produced no audio at all.
 let lastFailedTrace: string[] = [];
 
@@ -217,7 +240,8 @@ async function generateLunaAudio(
   text: string,
   requestedVoice = "bn-BD-NabanitaNeural",
   _personality = "sweet",
-  userApiKey?: string | null
+  userApiKey?: string | null,
+  eleven?: ElevenOptions
 ): Promise<GeneratedAudioResult | null> {
   const cleanText = text
     .replace(/\*[^*]+\*/g, "") // remove *sigh*, *dramatic pause*
@@ -235,7 +259,7 @@ async function generateLunaAudio(
   const trace: string[] = [];
 
   const cacheKey = `${requestedVoice}:${_personality}:${cleanText}`;
-  if (audioCache.has(cacheKey)) {
+  if (!eleven && audioCache.has(cacheKey)) {
     const cached = audioCache.get(cacheKey)!;
     return {
       audioBase64: cached,
@@ -243,6 +267,69 @@ async function generateLunaAudio(
       voiceUsed: requestedVoice,
       trace: ["cache: আগের তৈরি অডিও ব্যবহার হয়েছে"],
     };
+  }
+
+  // ElevenLabs (optional): tried first when the user added a key in Settings.
+  if (eleven) {
+    const elCacheKey = `eleven:${eleven.voiceId}:${eleven.model}:${cleanText}`;
+    const elCached = audioCache.get(elCacheKey);
+    const blockedUntil = elevenCooldownUntil.get(eleven.key) || 0;
+    if (elCached) {
+      return {
+        audioBase64: elCached,
+        engine: "cache",
+        voiceUsed: `elevenlabs:${eleven.voiceId}`,
+        trace: ["cache: ElevenLabs-এর আগের তৈরি অডিও"],
+      };
+    }
+    if (blockedUntil > Date.now()) {
+      trace.push(`elevenlabs: বাদ (Key/কোটা সমস্যা, ~${Math.ceil((blockedUntil - Date.now()) / 60000)} মিনিট পর আবার চেষ্টা)`);
+    } else {
+      const started = Date.now();
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20000);
+      try {
+        const r = await fetch(
+          `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(eleven.voiceId)}?output_format=mp3_44100_128`,
+          {
+            method: "POST",
+            headers: {
+              "xi-api-key": eleven.key,
+              "Content-Type": "application/json",
+              Accept: "audio/mpeg",
+            },
+            body: JSON.stringify({ text: cleanText, model_id: eleven.model }),
+            signal: controller.signal,
+          }
+        );
+        if (r.ok) {
+          const base64 = Buffer.from(await r.arrayBuffer()).toString("base64");
+          if (base64.length > 0) {
+            cacheAudio(elCacheKey, base64);
+            trace.push(`elevenlabs: OK (${eleven.model}, voice ${eleven.voiceId}, ${Date.now() - started}ms)`);
+            console.log(`[TTS Engine] Success with elevenlabs ${eleven.model}`);
+            return {
+              audioBase64: base64,
+              engine: `elevenlabs (${eleven.model})`,
+              voiceUsed: eleven.voiceId,
+              trace,
+            };
+          }
+          trace.push("elevenlabs: অডিও ডেটা আসেনি");
+        } else {
+          const body = (await r.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 160);
+          trace.push(`elevenlabs: ব্যর্থ (${r.status}) ${body}`);
+          if (r.status === 401 || r.status === 402 || r.status === 429) {
+            elevenCooldownUntil.set(eleven.key, Date.now() + 5 * 60 * 1000);
+          }
+          console.warn(`[TTS Engine] elevenlabs ${r.status}: ${body}`);
+        }
+      } catch (err: any) {
+        trace.push(`elevenlabs: ব্যর্থ ${String(err?.name === "AbortError" ? "সময় শেষ (20s)" : err?.message || err).slice(0, 120)}`);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
   }
 
   // Voice profiles. `only25` voices are played with their exact Gemini voice on the 2.5 TTS model
@@ -586,7 +673,7 @@ app.post("/api/gemini/audio", async (req, res) => {
       return res.status(400).json({ error: "Text is required" });
     }
     lastFailedTrace = [];
-    const result = await generateLunaAudio(text, voice, personality, req.header("x-gemini-key"));
+    const result = await generateLunaAudio(text, voice, personality, req.header("x-gemini-key"), readElevenOptions(req));
     const audioBase64 = result?.audioBase64 || null;
     const isWav = Boolean(audioBase64 && audioBase64.startsWith("UklGR"));
     res.json({
