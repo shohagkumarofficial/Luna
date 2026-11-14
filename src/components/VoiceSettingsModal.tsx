@@ -406,7 +406,7 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
                   setElVoice(e.target.value);
                   setElSaved(false);
                 }}
-                placeholder={`Voice ID (ঐচ্ছিক, ডিফল্ট ${DEFAULT_ELEVEN_VOICE})`}
+                placeholder="Voice ID (ফ্রি প্ল্যানে নিজের My Voices থেকে দাও)"
                 autoComplete="off"
                 spellCheck={false}
                 className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/30 outline-none focus:border-white/30"

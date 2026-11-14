@@ -273,7 +273,8 @@ async function generateLunaAudio(
   if (eleven) {
     const elCacheKey = `eleven:${eleven.voiceId}:${eleven.model}:${cleanText}`;
     const elCached = audioCache.get(elCacheKey);
-    const blockedUntil = elevenCooldownUntil.get(eleven.key) || 0;
+    const elCooldownKey = `${eleven.key}:${eleven.voiceId}:${eleven.model}`;
+    const blockedUntil = elevenCooldownUntil.get(elCooldownKey) || 0;
     if (elCached) {
       return {
         audioBase64: elCached,
@@ -319,8 +320,11 @@ async function generateLunaAudio(
         } else {
           const body = (await r.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 160);
           trace.push(`elevenlabs: ব্যর্থ (${r.status}) ${body}`);
+          if (/library voices|paid_plan_required/i.test(body)) {
+            trace.push("ইঙ্গিত: ফ্রি প্ল্যানে লাইব্রেরি ভয়েস চলে না। ElevenLabs-এর My Voices-এর নিজের ভয়েসের Voice ID সেটিংসে দাও।");
+          }
           if (r.status === 401 || r.status === 402 || r.status === 429) {
-            elevenCooldownUntil.set(eleven.key, Date.now() + 5 * 60 * 1000);
+            elevenCooldownUntil.set(elCooldownKey, Date.now() + 5 * 60 * 1000);
           }
           console.warn(`[TTS Engine] elevenlabs ${r.status}: ${body}`);
         }
