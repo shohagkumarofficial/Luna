@@ -44,6 +44,9 @@ export async function getLunaResponse(
   }
 }
 
+// Which server engine produced the most recent clip (e.g. a Gemini TTS model or "edge-tts").
+export let lastAudioEngine: string | null = null;
+
 export async function getLunaAudio(
   text: string,
   voice?: string,
@@ -75,7 +78,10 @@ export async function getLunaAudio(
       }
 
       const data = await response.json();
-      if (data.audioBase64) return data.audioBase64;
+      if (data.audioBase64) {
+        lastAudioEngine = data.engine || null;
+        return data.audioBase64;
+      }
     } catch (error) {
       console.warn(`Cloud TTS attempt ${attempt + 1} failed:`, error);
       if (typeof navigator !== "undefined" && !navigator.onLine) return null;

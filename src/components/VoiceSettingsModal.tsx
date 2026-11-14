@@ -1,6 +1,6 @@
 import React, { useRef, useState } from "react";
 import { Sparkles, Volume2, Check, X, RefreshCw, Heart, Smile, Gauge, RotateCcw, Palette, Languages, KeyRound, Eye, EyeOff } from "lucide-react";
-import { getLunaAudio } from "../services/geminiService";
+import { getLunaAudio, lastAudioEngine } from "../services/geminiService";
 import { playPCM } from "../utils/audioUtils";
 import { speakLuna, stopLunaSpeech } from "../utils/speech";
 import { ThemeId, THEMES, THEME_OPTIONS } from "../utils/theme";
@@ -82,50 +82,74 @@ export interface VoiceOption {
 
 export const CUTE_VOICES: VoiceOption[] = [
   {
-    id: "bn-BD-NabanitaNeural",
-    name: "নবানিতা — খাঁটি মিষ্টি বাংলা 🇧🇩 💖",
-    dialect: "বাংলাদেশী তরুণী (সাজেস্টেড)",
-    description: "সবচেয়ে স্বাভাবিক ও খাঁটি বাংলাদেশী উচ্চারণে মিষ্টি ও তরুণী কণ্ঠ (কোনো বিদেশী টান নেই)",
-    isNeural: true,
-    avatar: "💖",
-  },
-  {
-    id: "maya-zephyr",
-    name: "লুনা — মায়াবী ও কোমল (Zephyr) 🌸",
-    dialect: "নরম ও সুরেলা তরুণী",
-    description: "হালকা, মিষ্টি ও রোমান্টিক গার্লফ্রেন্ডের মতো নরম কণ্ঠস্বর",
-    isNeural: true,
-    avatar: "🌸",
-  },
-  {
     id: "maya-leda",
-    name: "লুনা — চঞ্চল ও উচ্ছ্বল (Leda) ✨",
-    dialect: "প্রাণবন্ত ও দ্রুত",
-    description: "সতেজ, হাসিখুশি ও চঞ্চল মেয়েলি কণ্ঠ (আগের চেয়ে একটু বেশি প্রাণবন্ত ও মিষ্টি)",
+    name: "লুনা — কিউট ও চঞ্চল (Leda) ✨",
+    dialect: "কম বয়সী, মিষ্টি ও প্রাণবন্ত",
+    description: "হালকা, ঝকঝকে ও কিউট কিশোরী-তরুণীর কণ্ঠ — সবচেয়ে ছোট ও মিষ্টি শোনায়",
     isNeural: true,
     avatar: "✨",
   },
   {
+    id: "maya-zephyr",
+    name: "লুনা — উজ্জ্বল ও মিষ্টি (Zephyr) 🌸",
+    dialect: "হালকা ও সতেজ তরুণী",
+    description: "উজ্জ্বল, হালকা ও রোমান্টিক গার্লফ্রেন্ডের মতো তরুণ কণ্ঠ",
+    isNeural: true,
+    avatar: "🌸",
+  },
+  {
+    id: "maya-aoede",
+    name: "লুনা — স্বপ্নিল ও নরম (Aoede) 🦋",
+    dialect: "হালকা বাতাসের মতো",
+    description: "নরম, স্বপ্নালু ও আদুরে মেয়েলি কণ্ঠ",
+    isNeural: true,
+    avatar: "🦋",
+  },
+  {
+    id: "maya-laomedeia",
+    name: "লুনা — হাসিখুশি ও উচ্ছ্বল (Laomedeia) 🎀",
+    dialect: "এনার্জেটিক ও মজার",
+    description: "সবসময় হাসিখুশি, দুষ্টু-মিষ্টি ও প্রাণোচ্ছল কণ্ঠ",
+    isNeural: true,
+    avatar: "🎀",
+  },
+  {
+    id: "maya-achernar",
+    name: "লুনা — লাজুক ও আদুরে (Achernar) 🍓",
+    dialect: "ফিসফিসে নরম",
+    description: "লাজুক, মিহি ও খুব আদুরে কিউট কণ্ঠ",
+    isNeural: true,
+    avatar: "🍓",
+  },
+  {
+    id: "bn-BD-NabanitaNeural",
+    name: "নবানিতা — বাংলাদেশী বাংলা 🇧🇩",
+    dialect: "স্বাভাবিক বাংলাদেশী উচ্চারণ",
+    description: "ফ্রি ও সবসময় চলে (Gemini Key ছাড়াও) — তবে একটু পরিণত শোনায়",
+    isNeural: true,
+    avatar: "💖",
+  },
+  {
     id: "bn-IN-TanishaaNeural",
-    name: "তানিশা — মিষ্টি কলকাতা বাংলা 🌺",
+    name: "তানিশা — কলকাতা বাংলা 🌺",
     dialect: "শান্ত ও সুরেলা",
-    description: "নরম, ধীরে ও সুরেলা ভঙ্গির ভারতীয় মিষ্টি বাংলা মেয়েলি কণ্ঠ",
+    description: "নরম ও সুরেলা ভারতীয় বাংলা কণ্ঠ (Gemini Key ছাড়াও চলে)",
     isNeural: true,
     avatar: "🌺",
   },
   {
     id: "maya-vindemiatrix",
-    name: "মায়া — গভীর ও রোমান্টিক 🎙️",
+    name: "মায়া — গভীর ও শান্ত (Vindemiatrix) 🎙️",
     dialect: "গভীর ও ধীর",
-    description: "গভীর, ভরাট, শান্ত ও রোমান্টিক ক্লাসিক কণ্ঠস্বর",
+    description: "গভীর, শান্ত ও রোমান্টিক কণ্ঠ (এটি একটু পরিণত শোনায়)",
     isNeural: true,
     avatar: "🎙️",
   },
   {
     id: "device-cute",
-    name: "ডিভাইসের কিউট ভয়েস",
+    name: "ডিভাইসের ভয়েস",
     dialect: "সিস্টেম স্পিচ",
-    description: "আপনার ফোন/কম্পিউটারের লোকাল কিউট স্পিচ ভয়েস (অফলাইন সাপোর্ট)",
+    description: "আপনার ফোন/কম্পিউটারের নিজস্ব ভয়েস (অফলাইনেও চলে)",
     isNeural: false,
     avatar: "📱",
   },
@@ -188,6 +212,11 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
         const audio = await getLunaAudio(testPhrase, voice.id, selectedPersonality);
         if (isStale()) return;
         if (audio) {
+          if (voice.id.startsWith("maya-") && (lastAudioEngine || "").startsWith("edge")) {
+            setFallbackNotice(
+              "Gemini কণ্ঠ পাওয়া যায়নি (API Key নেই বা কোটা শেষ), তাই বিকল্প ইঞ্জিনের ভয়েস বাজছে — এ কারণে সব ভয়েস একই রকম ও একটু পরিণত শোনায়। সেটিংসে নিজের Gemini API Key দিলে আলাদা আলাদা কিউট কণ্ঠ পাবেন।"
+            );
+          }
           await playPCM(audio, "mp3", speakingRate);
           return;
         }

@@ -118,7 +118,7 @@ export default function App() {
   const [showChatDrawer, setShowChatDrawer] = useState(false);
   const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState<string>(() => {
-    return localStorage.getItem("luna_voice_choice") || "bn-BD-NabanitaNeural";
+    return localStorage.getItem("luna_voice_choice") || "maya-leda";
   });
   const selectedVoiceRef = useRef(selectedVoice);
 

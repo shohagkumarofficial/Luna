@@ -237,70 +237,73 @@ async function generateLunaAudio(
     };
   }
 
-  // Gemini 3.8 TTS supports: Puck, Charon, Kore, Fenrir, Zephyr
-  // Map each Gemini voice preset to a distinct supported 3.8 voice + style profile
-  const geminiVoiceProfiles: Record<
-    string,
-    {
-      voice38: "Zephyr" | "Kore";
-      voice25: string;
-      preferFlagship38?: boolean;
-      styleByPersonality: Record<string, string>;
-    }
-  > = {
+  // Voice profiles. `only25` voices are played with their exact Gemini voice on the 2.5 TTS model
+  // (the 3.8 models only offer a few stand-in voices, which made different menu entries sound alike).
+  type VoiceProfile = {
+    voice38: string;
+    voice25: string;
+    preferFlagship38?: boolean;
+    only25?: boolean;
+    styleByPersonality: Record<string, string>;
+  };
+
+  // Every cue asks for a young, light, cute girl — not a mature/aunty tone.
+  const youngStyle = (character: string): Record<string, string> => ({
+    witty: `${character}, playful and quick-witted, giggly, speaking Bengali like a cheerful college girl`,
+    empathetic: `${character}, tender and caring, soft and sweet, speaking Bengali gently like a young girlfriend`,
+    sassy: `${character}, cheeky and teasing with a cute pout, speaking Bengali like a playful young girlfriend`,
+    sweet: `${character}, sweet, cute and bubbly with a smile in the voice, speaking Bengali like a young girlfriend`,
+  });
+
+  const geminiVoiceProfiles: Record<string, VoiceProfile> = {
     "maya-zephyr": {
       voice38: "Zephyr",
       voice25: "Zephyr",
-      styleByPersonality: {
-        witty: "Soft, airy, cheerful young Bangladeshi woman speaking Bengali warmly with a light playful smile",
-        empathetic: "Very soft, tender, whisper-warm affectionate young woman speaking Bengali gently and soothingly",
-        sassy: "Soft yet playfully teasing young woman speaking Bengali with charming cheeky warmth",
-        sweet: "Soft, gentle, dreamy young Bangladeshi woman speaking Bengali tenderly with warm affection",
-      },
+      styleByPersonality: youngStyle("Bright, light, high-pitched, youthful and cute young woman in her early twenties"),
     },
     "maya-leda": {
       voice38: "Kore",
       voice25: "Leda",
-      styleByPersonality: {
-        witty: "Bright, energetic, bubbly young Bangladeshi girl speaking Bengali briskly with cheerful sparkle",
-        empathetic: "Clear, warm, bright-hearted young woman speaking Bengali tenderly and reassuringly",
-        sassy: "Crisp, lively, confident young girl speaking Bengali with bold playful energy",
-        sweet: "Bright, bubbly, lively young Bangladeshi girl speaking Bengali enthusiastically with a big smile",
-      },
+      only25: true,
+      styleByPersonality: youngStyle("Youthful, sparkling, high-pitched, very cute teenage-sounding girl"),
     },
     "maya-kore": {
       voice38: "Kore",
       voice25: "Kore",
-      styleByPersonality: {
-        witty: "Bright, energetic, bubbly young Bangladeshi girl speaking Bengali briskly with cheerful sparkle",
-        empathetic: "Clear, warm, bright-hearted young woman speaking Bengali tenderly and reassuringly",
-        sassy: "Crisp, lively, confident young girl speaking Bengali with bold playful energy",
-        sweet: "Bright, bubbly, lively young Bangladeshi girl speaking Bengali enthusiastically with a big smile",
-      },
+      styleByPersonality: youngStyle("Bright, energetic, youthful and cute young girl"),
+    },
+    "maya-aoede": {
+      voice38: "Aoede",
+      voice25: "Aoede",
+      only25: true,
+      styleByPersonality: youngStyle("Breezy, airy, light and dreamy young girl with a sweet cute tone"),
+    },
+    "maya-laomedeia": {
+      voice38: "Laomedeia",
+      voice25: "Laomedeia",
+      only25: true,
+      styleByPersonality: youngStyle("Upbeat, happy, high-energy and very cute young girl"),
+    },
+    "maya-achernar": {
+      voice38: "Achernar",
+      voice25: "Achernar",
+      only25: true,
+      styleByPersonality: youngStyle("Soft, gentle, shy and very cute young girl speaking in a sweet whisper-light voice"),
     },
     "maya-vindemiatrix": {
       voice38: "Kore",
       voice25: "Vindemiatrix",
       preferFlagship38: true,
+      only25: true,
       styleByPersonality: {
-        witty: "Deep, rich, smoky, poised adult woman speaking Bengali with calm dry wit and warm confidence",
-        empathetic: "Deep, velvety, slow, deeply comforting adult woman speaking Bengali with serene warmth",
-        sassy: "Deep, husky, confident, dramatic woman speaking Bengali with smooth sultry poise",
-        sweet: "Deep, warm, velvety, calm mature female voice speaking Bengali gently and romantically",
-      },
-    },
-    Vindemiatrix: {
-      voice38: "Kore",
-      voice25: "Vindemiatrix",
-      preferFlagship38: true,
-      styleByPersonality: {
-        witty: "Deep, rich, smoky, poised adult woman speaking Bengali with calm dry wit and warm confidence",
-        empathetic: "Deep, velvety, slow, deeply comforting adult woman speaking Bengali with serene warmth",
-        sassy: "Deep, husky, confident, dramatic woman speaking Bengali with smooth sultry poise",
-        sweet: "Deep, warm, velvety, calm mature female voice speaking Bengali gently and romantically",
+        witty: "Calm, warm, gently witty young woman speaking Bengali with a soft smile",
+        empathetic: "Calm, velvety, comforting young woman speaking Bengali softly and tenderly",
+        sassy: "Smooth, confident young woman speaking Bengali with a playful low tone",
+        sweet: "Warm, gentle, romantic young woman speaking Bengali softly and sweetly",
       },
     },
   };
+  geminiVoiceProfiles["Vindemiatrix"] = geminiVoiceProfiles["maya-vindemiatrix"];
 
   const geminiProfile = geminiVoiceProfiles[requestedVoice];
 
@@ -315,12 +318,8 @@ async function generateLunaAudio(
       },
     });
 
-    // When the 3.8 models can only offer a stand-in voice (e.g. Leda/Vindemiatrix -> Kore), try the
-    // 2.5 model first so the voice the user actually selected is the one that plays. Otherwise two
-    // different menu entries would sound identical.
-    const exactVoiceOnlyOn25 = geminiProfile.voice38 !== geminiProfile.voice25;
-    const geminiTtsModels = exactVoiceOnlyOn25
-      ? ["gemini-2.5-flash-preview-tts", "gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"]
+    const geminiTtsModels = geminiProfile.only25
+      ? ["gemini-2.5-flash-preview-tts"]
       : geminiProfile.preferFlagship38
         ? ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts", "gemini-2.5-flash-preview-tts"]
         : ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-2.5-flash-preview-tts"];
@@ -401,26 +400,38 @@ async function generateLunaAudio(
   let basePitchHz = 2;
   let baseRatePct = 0;
 
-  if (requestedVoice === "bn-IN-TanishaaNeural") {
-    // Distinct Indian Bengali voice actor, calm & lyrical
+  if (requestedVoice === "bn-BD-NabanitaNeural") {
+    targetVoice = "bn-BD-NabanitaNeural";
+    basePitchHz = 10;
+    baseRatePct = 4;
+  } else if (requestedVoice === "bn-IN-TanishaaNeural") {
     targetVoice = "bn-IN-TanishaaNeural";
-    basePitchHz = 0;
-    baseRatePct = -3;
+    basePitchHz = 8;
+    baseRatePct = 2;
   } else if (requestedVoice === "maya-zephyr") {
-    // Soft, gentle, airy dreamy fallback profile
     targetVoice = "bn-IN-TanishaaNeural";
-    basePitchHz = 6;
-    baseRatePct = -6;
+    basePitchHz = 14;
+    baseRatePct = 3;
   } else if (requestedVoice === "maya-leda" || requestedVoice === "maya-kore") {
-    // Bright, bubbly, energetic youthful fallback profile
+    targetVoice = "bn-BD-NabanitaNeural";
+    basePitchHz = 16;
+    baseRatePct = 8;
+  } else if (requestedVoice === "maya-aoede") {
+    targetVoice = "bn-IN-TanishaaNeural";
+    basePitchHz = 10;
+    baseRatePct = 6;
+  } else if (requestedVoice === "maya-laomedeia") {
+    targetVoice = "bn-BD-NabanitaNeural";
+    basePitchHz = 12;
+    baseRatePct = 10;
+  } else if (requestedVoice === "maya-achernar") {
     targetVoice = "bn-BD-NabanitaNeural";
     basePitchHz = 8;
-    baseRatePct = 4;
+    baseRatePct = -2;
   } else if (requestedVoice === "maya-vindemiatrix" || requestedVoice === "Vindemiatrix") {
-    // Deep, calm, velvety romantic fallback profile
     targetVoice = "bn-BD-NabanitaNeural";
-    basePitchHz = -8;
-    baseRatePct = -5;
+    basePitchHz = 0;
+    baseRatePct = -3;
   } else if (requestedVoice === "en-IN-NeerjaNeural") {
     targetVoice = "en-IN-NeerjaNeural";
     basePitchHz = 4;
