@@ -9,6 +9,7 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   onOpenLab: () => void;
+  onSaveTurn?: (user: string, luna: string) => void;
 }
 
 const DEFAULT_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-09-2025";
@@ -22,7 +23,7 @@ const STATE_LABEL: Record<LiveState, string> = {
   closed: "বন্ধ",
 };
 
-export const LiveModePanel: React.FC<Props> = ({ isOpen, onClose, onOpenLab }) => {
+export const LiveModePanel: React.FC<Props> = ({ isOpen, onClose, onOpenLab, onSaveTurn }) => {
   const [state, setState] = useState<LiveState>("closed");
   const [error, setError] = useState("");
   const [turns, setTurns] = useState<{ user: string; luna: string }[]>([]);
@@ -30,6 +31,9 @@ export const LiveModePanel: React.FC<Props> = ({ isOpen, onClose, onOpenLab }) =
     try { return localStorage.getItem(VOICE_KEY) || "Leda"; } catch { return "Leda"; }
   });
   const clientRef = useRef<GeminiLiveClient | null>(null);
+  const turnsRef = useRef<{ user: string; luna: string }[]>([]);
+  const retriesRef = useRef(0);
+  const savedRef = useRef(0);
   const endRef = useRef<HTMLDivElement | null>(null);
   const model = getModelPref("live") || DEFAULT_LIVE_MODEL;
   const running = state !== "closed";
@@ -46,11 +50,14 @@ export const LiveModePanel: React.FC<Props> = ({ isOpen, onClose, onOpenLab }) =
     }
     setError("");
     setTurns([{ user: "", luna: "" }]);
+    turnsRef.current = [{ user: "", luna: "" }];
+    retriesRef.current = 0;
+    savedRef.current = 0;
     await startWithKey(0);
   };
 
   // If connecting fails (e.g. quota on this key), the next saved key is tried automatically.
-  const startWithKey = async (ki: number) => {
+  const startWithKey = async (ki: number, context = "") => {
     const keys = getApiKeys();
     const key = keys[ki];
     const t0 = performance.now();
@@ -63,18 +70,36 @@ export const LiveModePanel: React.FC<Props> = ({ isOpen, onClose, onOpenLab }) =
           addLog("ok", `Live চালু: ${model} · ${Math.round(performance.now() - t0)}ms`, [`ভয়েস: ${voice}`]);
         }
       },
-      onUserText: (t) => setTurns((a) => { const c = a.slice(); c[c.length - 1] = { ...c[c.length - 1], user: t }; return c; }),
-      onLunaText: (t) => setTurns((a) => { const c = a.slice(); c[c.length - 1] = { ...c[c.length - 1], luna: t }; return c; }),
-      onTurnEnd: () => setTurns((a) => [...a, { user: "", luna: "" }]),
-      onError: (msg) => {
+      onUserText: (t) => { const c = turnsRef.current.slice(); c[c.length - 1] = { ...c[c.length - 1], user: t }; turnsRef.current = c; setTurns(c); },
+      onLunaText: (t) => { const c = turnsRef.current.slice(); c[c.length - 1] = { ...c[c.length - 1], luna: t }; turnsRef.current = c; setTurns(c); },
+      onTurnEnd: () => {
+        const last = turnsRef.current[turnsRef.current.length - 1];
+        if (last && (last.user || last.luna)) onSaveTurn?.(last.user, last.luna); // keep the talk in the chat history
+        const c = [...turnsRef.current, { user: "", luna: "" }];
+        turnsRef.current = c;
+        setTurns(c);
+      },
+      onError: (msg, wasReady) => {
         addLog("error", `Live ব্যর্থ${keys.length > 1 ? ` [Key ${ki + 1}]` : ""}`, [model, msg]);
         if (first && ki + 1 < keys.length) {
           startWithKey(ki + 1);
           return;
         }
+        // The session dropped mid-talk (Live sessions are time-limited): reconnect and recall the recent talk.
+        if (wasReady && retriesRef.current < 3) {
+          retriesRef.current += 1;
+          const recent = turnsRef.current
+            .filter((x) => x.user || x.luna)
+            .slice(-6)
+            .map((x) => `সোহাগ: ${x.user}\nলুনা: ${x.luna}`)
+            .join("\n");
+          addLog("warn", "Live সংযোগ কেটে গিয়েছিল, আবার জুড়ছে", [`চেষ্টা ${retriesRef.current}/৩`]);
+          setTimeout(() => startWithKey(ki, recent ? `এই কথোপকথন চলছিল, এখান থেকেই স্বাভাবিকভাবে চালিয়ে যাও:\n${recent}` : ""), 600);
+          return;
+        }
         setError(msg);
       },
-    });
+    }, context);
     clientRef.current = client;
     await client.start();
   };

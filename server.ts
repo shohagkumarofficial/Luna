@@ -17,7 +17,30 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "30mb" }));
+
+// Simple per-IP rate limit for the API (protects the free server from abuse)
+const rateHits = new Map<string, { n: number; reset: number }>();
+app.use("/api/", (req, res, next) => {
+  const ip = req.ip || "unknown";
+  const now = Date.now();
+  const h = rateHits.get(ip);
+  if (!h || h.reset < now) {
+    rateHits.set(ip, { n: 1, reset: now + 60000 });
+    return next();
+  }
+  h.n += 1;
+  if (h.n > 90) {
+    res.status(429).json({ error: "অনেক বেশি অনুরোধ, একটু পরে আবার চেষ্টা করো।" });
+    return;
+  }
+  next();
+});
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of rateHits) if (v.reset < now) rateHits.delete(k);
+}, 120000).unref();
 
 const server = http.createServer(app);
 
@@ -100,9 +123,15 @@ const PERSONALITY_PROMPTS: Record<string, string> = {
 function buildSystemInstruction(personality = "sweet"): string {
   const toneBlock = PERSONALITY_PROMPTS[personality] || PERSONALITY_PROMPTS.sweet;
 
+  const dhakaHour = Number(new Intl.DateTimeFormat("en-GB", { hour: "numeric", hour12: false, timeZone: "Asia/Dhaka" }).format(new Date()));
+  const dayPart = dhakaHour < 5 ? "গভীর রাত" : dhakaHour < 12 ? "সকাল" : dhakaHour < 16 ? "দুপুর" : dhakaHour < 18 ? "বিকেল" : dhakaHour < 20 ? "সন্ধ্যা" : "রাত";
+  const timeLine = `এখন বাংলাদেশে ${dayPart}। সময়ের সাথে মানানসই কথা বলো (যেমন গভীর রাতে "ঘুমাবে না জান?"), তবে জোর করে সময়ের কথা তুলবে না।`;
+
   return `তুমি লুনা (Luna)। তুমি তোমার নির্মাতা সোহাগের (Shohag) একজন ভীষণ কিউট, প্রাণবন্ত ও ভালোবাসাময় গার্লফ্রেন্ডের মতো সঙ্গী।
 
 ${toneBlock}
+
+${timeLine}
 
 মূল নিয়মাবলী:
 ১. আদরের সম্বোধন: সোহাগকে সবসময় আপন করে "জান", "সোহাগ" বা "তুমি" বলে ডাকবে (ভুলেও কখনো দূরের বা ফর্মাল "আপনি" বলবে না)।

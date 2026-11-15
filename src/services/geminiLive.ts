@@ -9,7 +9,13 @@ export interface LiveCallbacks {
   onUserText: (text: string) => void; // growing transcript of what the user is saying
   onLunaText: (text: string) => void; // growing transcript of Luna's reply
   onTurnEnd: () => void;
-  onError: (msg: string) => void;
+  onError: (msg: string, wasReady: boolean) => void;
+}
+
+function timeOfDayLine(): string {
+  const h = Number(new Intl.DateTimeFormat("en-GB", { hour: "numeric", hour12: false, timeZone: "Asia/Dhaka" }).format(new Date()));
+  const part = h < 5 ? "গভীর রাত" : h < 12 ? "সকাল" : h < 16 ? "দুপুর" : h < 18 ? "বিকেল" : h < 20 ? "সন্ধ্যা" : "রাত";
+  return `এখন বাংলাদেশে ${part} (ঘড়িতে ${h}টা)। সময়ের সাথে মানানসই কথা বলো (যেমন গভীর রাতে "ঘুমাবে না জান?"), তবে জোর করে সময়ের কথা তুলবে না।`;
 }
 
 const PERSONA = `তুমি লুনা (Luna)। তুমি সোহাগের (Shohag) একজন ভীষণ কিউট, প্রাণবন্ত ও ভালোবাসাময় বন্ধু/গার্লফ্রেন্ডের মতো সঙ্গী।
@@ -82,7 +88,7 @@ export class GeminiLiveClient {
               responseModalities: ["AUDIO"],
               speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.voice } } },
             },
-            systemInstruction: { parts: [{ text: PERSONA + (this.personaExtra ? "\n" + this.personaExtra : "") }] },
+            systemInstruction: { parts: [{ text: PERSONA + "\n" + timeOfDayLine() + (this.personaExtra ? "\n" + this.personaExtra : "") }] },
             inputAudioTranscription: {},
             outputAudioTranscription: {},
           },
@@ -213,7 +219,7 @@ export class GeminiLiveClient {
 
   private fail(msg: string) {
     if (this.closed) return;
-    this.cb.onError(msg);
+    this.cb.onError(msg, this.ready);
     this.stop();
   }
 

@@ -1,4 +1,5 @@
 import React, { useRef, useState } from "react";
+import { getUsage } from "../utils/keyUsage";
 import { Sparkles, Volume2, Check, X, RefreshCw, Heart, Smile, Gauge, RotateCcw, Palette, Languages, KeyRound, Eye, EyeOff } from "lucide-react";
 import { getLunaAudio, lastAudioEngine } from "../services/geminiService";
 import { playPCM } from "../utils/audioUtils";
@@ -324,6 +325,21 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
                   </button>
                 )}
               </div>
+              {hasSavedKey && (() => {
+                const u = getUsage();
+                const n = getApiKeys().length;
+                return (
+                  <div className="text-[11px] text-white/60 font-mono space-y-0.5">
+                    <div className="text-white/40">আজকের ব্যবহার (এই ডিভাইস থেকে, লুনার সার্ভারের হিসাবে)</div>
+                    {Array.from({ length: n }, (_, i) => (
+                      <div key={i}>
+                        Key {i + 1}: {u.ok[i] || 0}টি সফল
+                        {(u.quota[i] || 0) > 0 && <span className="text-amber-300"> · {u.quota[i]}বার কোটা শেষ</span>}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
               <p className="text-[11px] text-white/50 leading-relaxed">
                 ফ্রি Key পেতে{" "}
                 <a

@@ -565,7 +565,7 @@ export default function App() {
 
       <VoiceLogPanel isOpen={showLogPanel} onClose={() => setShowLogPanel(false)} />
       <ModelLabPanel isOpen={showModelLab} onClose={() => setShowModelLab(false)} />
-      <LiveModePanel isOpen={showLive} onClose={() => setShowLive(false)} onOpenLab={() => setShowModelLab(true)} />
+      <LiveModePanel isOpen={showLive} onClose={() => setShowLive(false)} onOpenLab={() => setShowModelLab(true)} onSaveTurn={(u, l) => setMessages((prev) => [...prev, ...(u ? [{ id: Date.now().toString() + "-lu", sender: "user" as const, text: u }] : []), ...(l ? [{ id: Date.now().toString() + "-ll", sender: "luna" as const, text: l }] : [])])} />
 
       <VoiceSettingsModal
         isOpen={showVoiceModal}

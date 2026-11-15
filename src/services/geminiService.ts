@@ -1,4 +1,5 @@
 import { getOfflineLunaResponse } from "../utils/offlineFallback";
+import { recordFromTrace } from "../utils/keyUsage";
 import { apiKeyHeaders, getApiKey, getElevenKey } from "../utils/apiKey";
 import { addLog } from "../utils/voiceLog";
 
@@ -38,6 +39,7 @@ export async function getLunaResponse(
     }
 
     const data = await response.json();
+    recordFromTrace(data.trace);
     addLog(
       data.noKey ? "warn" : data.text ? "ok" : "warn",
       data.noKey ? "উত্তর: Gemini Key নেই, তাই Key চাওয়ার বার্তা দেখানো হলো" : data.text ? `উত্তর: ${data.model || "Gemini"} থেকে এসেছে` : "উত্তর খালি, অফলাইন উত্তর ব্যবহার হলো",
@@ -88,6 +90,7 @@ export async function getLunaAudio(
       const data = await response.json();
       const ms = Math.round(performance.now() - startedAt);
       const trace: string[] = Array.isArray(data.trace) ? data.trace : [];
+      recordFromTrace(trace);
       if (data.audioBase64) {
         lastAudioEngine = data.engine || null;
         const isGemini = /^(gemini|eleven)/.test(String(data.engine || ""));
