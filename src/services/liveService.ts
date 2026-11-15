@@ -1,3 +1,4 @@
+import { wsUrl as buildWsUrl } from "../utils/platform";
 import { getApiKeys } from "../utils/apiKey";
 import { getModelPref } from "../utils/modelPrefs";
 
@@ -99,10 +100,7 @@ export class LiveSessionManager {
       this.processor.connect(this.audioContext.destination);
 
       // Connect to Server-side WebSocket Live API bridge
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${window.location.host}/api/live`;
-
-      this.ws = new WebSocket(wsUrl);
+      this.ws = new WebSocket(buildWsUrl("/api/live"));
 
       this.ws.onopen = () => {
         console.log("[Client] WebSocket live bridge connected");

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { X, RefreshCw, Play, Check, FlaskConical, Square } from "lucide-react";
+import { apiUrl } from "../utils/platform";
 import { getApiKey, getApiKeys } from "../utils/apiKey";
 import { getModelPref, setModelPref, markModelResult } from "../utils/modelPrefs";
 import { addLog } from "../utils/voiceLog";
@@ -86,7 +87,7 @@ export const ModelLabPanel: React.FC<ModelLabPanelProps> = ({ isOpen, onClose })
     if (res.ok === true || res.ok === false) markModelResult(m.kind, m.id, res.ok === true);
     if (res.ok === true && m.kind !== "live") {
       // a working test also lifts the server's "rest" list for this key
-      fetch("/api/gemini/reset-cooldowns", { method: "POST", headers: { "x-gemini-key": getApiKeys().join(",") } }).catch(() => {});
+      fetch(apiUrl("/api/gemini/reset-cooldowns"), { method: "POST", headers: { "x-gemini-key": getApiKeys().join(",") } }).catch(() => {});
     }
     addLog(res.ok === true ? "ok" : res.ok === false ? "error" : "warn", `মডেল টেস্ট (${m.kind}): ${m.id} · ${res.ms}ms`, [res.message]);
     if (res.audio && audioRef.current) {

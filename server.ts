@@ -18,6 +18,22 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.set("trust proxy", 1);
+
+// The Android app loads from https://localhost, so allow it (and the web app) to call the API.
+app.use("/api/", (req, res, next) => {
+  const origin = req.header("origin") || "";
+  if (/^(https?:\/\/localhost(:\d+)?|capacitor:\/\/localhost)$/.test(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Headers", "content-type, x-gemini-key, x-text-model, x-tts-model, x-text-ok, x-tts-ok, x-elevenlabs-key, x-elevenlabs-voice, x-elevenlabs-model");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  }
+  if (req.method === "OPTIONS") {
+    res.sendStatus(204);
+    return;
+  }
+  next();
+});
 app.use(express.json({ limit: "30mb" }));
 
 // Simple per-IP rate limit for the API (protects the free server from abuse)

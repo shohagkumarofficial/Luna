@@ -3,6 +3,7 @@ import { Mic, MicOff, Loader2, Volume2, VolumeX, Keyboard, Send, Trash2, Image a
 import { getLunaResponse, getLunaAudio, resetLunaSession } from "./services/geminiService";
 import { processCommand } from "./services/commandService";
 import { LiveSessionManager } from "./services/liveService";
+import { isNativeApp } from "./utils/platform";
 import Visualizer from "./components/Visualizer";
 import PermissionModal from "./components/PermissionModal";
 import { APKModal } from "./components/APKModal";
@@ -401,6 +402,12 @@ export default function App() {
 
   const toggleListening = async () => {
     unlockAudio();
+    // Android WebView has no browser speech recognition, so the app's main mic opens the Live conversation.
+    if (isNativeApp()) {
+      stopLunaSpeech();
+      setShowLive(true);
+      return;
+    }
     if (isSessionActive) {
       setIsSessionActive(false);
       setWakeWordActive(false);

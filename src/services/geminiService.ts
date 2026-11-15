@@ -1,11 +1,12 @@
 import { getOfflineLunaResponse } from "../utils/offlineFallback";
+import { apiUrl } from "../utils/platform";
 import { recordFromTrace } from "../utils/keyUsage";
 import { apiKeyHeaders, getApiKey, getElevenKey } from "../utils/apiKey";
 import { addLog } from "../utils/voiceLog";
 
 export function resetLunaSession() {
   if (typeof navigator !== "undefined" && !navigator.onLine) return;
-  fetch("/api/gemini/reset", { method: "POST" }).catch(() => {});
+  fetch(apiUrl("/api/gemini/reset"), { method: "POST" }).catch(() => {});
 }
 
 export async function getLunaResponse(
@@ -20,7 +21,7 @@ export async function getLunaResponse(
   }
 
   try {
-    const response = await fetch("/api/gemini/response", {
+    const response = await fetch(apiUrl("/api/gemini/response"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -73,7 +74,7 @@ export async function getLunaAudio(
     const startedAt = performance.now();
     const timer = setTimeout(() => controller.abort(), 25000);
     try {
-      const response = await fetch("/api/gemini/audio", {
+      const response = await fetch(apiUrl("/api/gemini/audio"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
