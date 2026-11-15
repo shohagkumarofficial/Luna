@@ -41,10 +41,17 @@ async function callGemini(key: string, model: string, body: any, timeoutMs: numb
   }
 }
 
+// Quota errors say how long to wait ("retryDelay": "23s"); use that instead of a fixed long rest.
+function quotaCool(msg: string): number {
+  const m = msg.match(/retry(?:Delay)?[^0-9]{0,12}(\d+(?:\.\d+)?)\s*s/i) || msg.match(/retry in (\d+(?:\.\d+)?)s/i);
+  const sec = m ? Math.ceil(parseFloat(m[1])) : 30;
+  return Math.min(Math.max(sec, 10), 90) * 1000;
+}
+
 function coolFor(status: any): number {
   return status === "timeout" ? 2 * 60000
     : status === 403 || status === 404 ? 10 * 60000
-    : status === 429 ? 3 * 60000
+    : status === 429 ? 30000
     : typeof status === "number" && status >= 500 ? 60000
     : 0;
 }
@@ -87,7 +94,13 @@ export async function directChat(
   const trace: string[] = [];
   const deadline = Date.now() + 45000;
 
-  outer: for (const model of models) {
+  let attempted = 0;
+  outer: for (let pass = 0; pass < 2; pass++) {
+   if (pass === 1) {
+     if (attempted > 0) break;
+     trace.push("সব মডেল বিশ্রামে ছিল, তাই বিশ্রাম উপেক্ষা করে আবার চেষ্টা");
+   }
+   for (const model of models) {
     for (let ki = 0; ki < keys.length; ki++) {
       const tag = keys.length > 1 ? ` [Key ${ki + 1}]` : "";
       const remaining = deadline - Date.now();
@@ -96,10 +109,11 @@ export async function directChat(
         break outer;
       }
       const until = cooldown.get(`${kid(keys[ki])}:${model}`) || 0;
-      if (until > Date.now()) {
+      if (pass === 0 && until > Date.now()) {
         trace.push(`${model}${tag}: বাদ (বিশ্রামে)`);
         continue;
       }
+      attempted++;
       const t0 = Date.now();
       try {
         const j = await callGemini(keys[ki], model, { contents, systemInstruction }, Math.min(20000, remaining));
@@ -111,10 +125,11 @@ export async function directChat(
         trace.push(`${model}${tag}: খালি উত্তর`);
       } catch (e: any) {
         trace.push(`${model}${tag}: ব্যর্থ (${e?.status || "error"}) ${String(e?.message || e).replace(/\s+/g, " ").slice(0, 110)}`);
-        const c = coolFor(e?.status);
+        const c = e?.status === 429 ? quotaCool(String(e?.message || "")) : coolFor(e?.status);
         if (c) cooldown.set(`${kid(keys[ki])}:${model}`, Date.now() + c);
       }
     }
+   }
   }
   return { text: "", model: null, trace };
 }
@@ -191,17 +206,27 @@ export async function directAudio(
       ? ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts", "gemini-2.5-flash-preview-tts"]
       : ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-2.5-flash-preview-tts"];
   const usable = (m: string) => !(profile.only25 && m.startsWith("gemini-3.8"));
-  const models = Array.from(new Set([...(preferred && usable(preferred) ? [preferred] : []), ...okModels.filter(usable), ...defaults]));
+  // Last resort for voices that only exist on the 2.5 model: a stand-in voice on the 3.8 models is
+  // better than falling back to the robotic device voice when the 2.5 quota is used up.
+  const standIn = profile.only25 ? ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"] : [];
+  const models = Array.from(new Set([...(preferred && usable(preferred) ? [preferred] : []), ...okModels.filter(usable), ...defaults, ...standIn]));
   const style = profile.styleByPersonality[personality] || profile.styleByPersonality.sweet;
 
-  for (const model of models) {
+  let attempted = 0;
+  for (let pass = 0; pass < 2; pass++) {
+   if (pass === 1) {
+     if (attempted > 0) break;
+     trace.push("সব মডেল বিশ্রামে ছিল, তাই বিশ্রাম উপেক্ষা করে আবার চেষ্টা");
+   }
+   for (const model of models) {
     for (let ki = 0; ki < keys.length; ki++) {
       const tag = keys.length > 1 ? ` [Key ${ki + 1}]` : "";
       const until = cooldown.get(`${kid(keys[ki])}:${model}`) || 0;
-      if (until > Date.now() && model !== preferred) {
+      if (pass === 0 && until > Date.now() && model !== preferred) {
         trace.push(`${model}${tag}: বাদ (বিশ্রামে)`);
         continue;
       }
+      attempted++;
       const is38 = model.startsWith("gemini-3.8");
       const vname = is38 ? profile.voice38 : profile.voice25;
       const part = is38 ? { text: clean, speechMetadata: { style } } : { text: `Say in a ${style}: ${clean}` };
@@ -219,17 +244,18 @@ export async function directAudio(
           const wav = wrapWav(inline.data, inline.mimeType);
           if (audioCache.size > 40) audioCache.delete(audioCache.keys().next().value as string);
           audioCache.set(ck, wav);
-          trace.push(`${model}${tag}: OK (${vname}, ${Date.now() - t0}ms)`);
+          trace.push(`${model}${tag}: OK (${vname}${profile.only25 && is38 ? ", বিকল্প কণ্ঠ: 2.5-এর কোটা শেষ" : ""}, ${Date.now() - t0}ms)`);
           return { audioBase64: wav, engine: model, voiceUsed: vname, trace };
         }
         trace.push(`${model}${tag}: অডিও ডেটা আসেনি`);
       } catch (e: any) {
         trace.push(`${model}${tag}: ব্যর্থ (${e?.status || "error"}) ${String(e?.message || e).replace(/\s+/g, " ").slice(0, 120)}`);
         const quota = e?.status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(String(e?.message));
-        const c = quota ? 3 * 60000 : coolFor(e?.status);
+        const c = quota ? quotaCool(String(e?.message || "")) : coolFor(e?.status);
         if (c) cooldown.set(`${kid(keys[ki])}:${model}`, Date.now() + c);
       }
     }
+   }
   }
   return { audioBase64: null, engine: null, voiceUsed: null, trace };
 }
