@@ -1,7 +1,7 @@
 import { getOfflineLunaResponse } from "../utils/offlineFallback";
 import { apiUrl } from "../utils/platform";
 import { recordFromTrace } from "../utils/keyUsage";
-import { apiKeyHeaders, getApiKey, getApiKeys, getElevenKey } from "../utils/apiKey";
+import { apiKeyHeaders, getApiKey, getApiKeys } from "../utils/apiKey";
 import { isNativeApp } from "../utils/platform";
 import { directChat, directAudio } from "./directGemini";
 import { getModelPref, getOkModels } from "../utils/modelPrefs";
@@ -122,7 +122,7 @@ export async function getLunaAudio(
       recordFromTrace(trace);
       if (data.audioBase64) {
         lastAudioEngine = data.engine || null;
-        const isGemini = /^(gemini|eleven)/.test(String(data.engine || ""));
+        const isGemini = /^gemini/.test(String(data.engine || ""));
         addLog(
           isGemini || data.engine === "cache" ? "ok" : "warn",
           `ভয়েস: ${data.engine || "?"} · ${ms}ms`,
@@ -142,7 +142,6 @@ export async function getLunaAudio(
 
   addLog("warn", "ক্লাউড ভয়েস পাওয়া যায়নি, ফোন/ব্রাউজারের ভয়েস ব্যবহার হবে", [
     getApiKey() ? "Gemini Key যোগ করা আছে" : "Gemini Key যোগ করা নেই (সেটিংস থেকে দাও)",
-    getElevenKey() ? "ElevenLabs Key যোগ করা আছে" : "ElevenLabs Key যোগ করা নেই",
   ]);
   console.warn("Cloud TTS unavailable, falling back to device speech");
   return null;
