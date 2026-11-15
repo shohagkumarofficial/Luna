@@ -2,7 +2,7 @@ name: Android APK
 
 on:
   push:
-    branches: [android-app]
+    branches: [android-app, features-v2]
   workflow_dispatch:
 
 permissions:
@@ -49,8 +49,8 @@ jobs:
       - name: Publish to a pre-release (easy phone download)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: android-latest
-          name: Luna test APK (latest)
+          tag_name: ${{ github.ref_name == 'android-app' && 'android-latest' || format('android-{0}', github.ref_name) }}
+          name: Luna test APK (${{ github.ref_name }})
           prerelease: true
           files: Luna-test.apk
           body: Latest test build from the android-app branch. Download Luna-test.apk and install it.
