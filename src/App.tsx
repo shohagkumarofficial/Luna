@@ -596,17 +596,17 @@ export default function App() {
       </div>
 
       {/* Header */}
-      <header className="absolute top-0 left-0 w-full flex justify-between items-center z-30 shrink-0 px-4 sm:px-6 py-4 md:px-12 md:py-6">
+      <header style={{ paddingTop: "calc(max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px)) + 0.75rem)" }} className="absolute top-0 left-0 w-full flex justify-between items-center z-30 shrink-0 px-3 sm:px-6 pb-3 md:px-12 md:pb-6 gap-2">
         <div className="flex items-center gap-3">
           <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${t.brandAvatar}`}>
             L
           </div>
-          <div>
+          <div className={isNativeApp() ? "hidden" : ""}>
             <h1 className="text-xl font-serif font-medium tracking-wide opacity-90 leading-tight">Luna</h1>
             <span className={`text-[10px] font-mono hidden sm:inline-block ${t.brandSubtitle}`}>AI Voice Assistant</span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 min-w-0 flex-wrap justify-end">
           {/* Live mode: real-time voice conversation */}
           <button
             onClick={() => { stopLunaSpeech(); setShowLive(true); }}
@@ -654,11 +654,11 @@ export default function App() {
                         ? "তানিশা"
                         : "ভয়েস"} • {(PERSONALITIES.find((p) => p.id === selectedPersonality) || PERSONALITIES[3]).emoji} {(PERSONALITIES.find((p) => p.id === selectedPersonality)?.id || "sweet").replace(/^\w/, (c) => c.toUpperCase())}
             </span>
-            <span className="sm:hidden">লুনা {(PERSONALITIES.find((p) => p.id === selectedPersonality) || PERSONALITIES[3]).emoji}</span>
+            {!isNativeApp() && <span className="sm:hidden">লুনা {(PERSONALITIES.find((p) => p.id === selectedPersonality) || PERSONALITIES[3]).emoji}</span>}
           </button>
 
-          {/* APK / Mobile App Install Button */}
-          <button
+          {/* APK / Mobile App Install Button (hidden inside the app itself) */}
+          {!isNativeApp() && <button
             onClick={() => setShowAPKModal(true)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold tracking-wide transition-all border shadow-lg ${
               isInstalled
@@ -670,7 +670,7 @@ export default function App() {
             <Smartphone size={14} className={isInstalled ? "text-emerald-400" : "text-white/90"} />
             <span className="hidden sm:inline">{isInstalled ? "APK Installed" : "Install APK"}</span>
             <span className="sm:hidden">{isInstalled ? "Installed" : "APK"}</span>
-          </button>
+          </button>}
 
           {/* Chat History Drawer Toggle Button */}
           <button
@@ -942,7 +942,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* Controls Footer */}
-      <footer className="absolute bottom-0 left-0 w-full flex flex-col items-center justify-center pb-5 md:pb-7 z-30 shrink-0 gap-3">
+      <footer style={{ paddingBottom: "calc(max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px)) + 1.25rem)" }} className="absolute bottom-0 left-0 w-full flex flex-col items-center justify-center md:pb-7 z-30 shrink-0 gap-3">
         <AnimatePresence>
           {showTextInput && (
             <motion.div 

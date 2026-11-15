@@ -1,7 +1,10 @@
 import { getOfflineLunaResponse } from "../utils/offlineFallback";
 import { apiUrl } from "../utils/platform";
 import { recordFromTrace } from "../utils/keyUsage";
-import { apiKeyHeaders, getApiKey, getElevenKey } from "../utils/apiKey";
+import { apiKeyHeaders, getApiKey, getApiKeys, getElevenKey } from "../utils/apiKey";
+import { isNativeApp } from "../utils/platform";
+import { directChat, directAudio } from "./directGemini";
+import { getModelPref, getOkModels } from "../utils/modelPrefs";
 import { addLog } from "../utils/voiceLog";
 
 export function resetLunaSession() {
@@ -21,6 +24,17 @@ export async function getLunaResponse(
   }
 
   try {
+    // Android app: talk to Google directly (no Luna server needed)
+    if (isNativeApp()) {
+      const d = await directChat(prompt, history, imageBase64, personality, getApiKeys(), getModelPref("text") || undefined, getOkModels("text"));
+      recordFromTrace(d.trace);
+      if (d.noKey) {
+        addLog("warn", "উত্তর: Gemini Key নেই", ["সেটিংস থেকে API Key যোগ করো"]);
+        return "সোহাগ, আমার কথা বলার জন্য Gemini API Key লাগবে। উপরে সেটিংস থেকে API Key যোগ করে দাও, তারপর আমরা গল্প করবো!";
+      }
+      addLog(d.text ? "ok" : "warn", d.text ? `উত্তর: ${d.model} থেকে এসেছে` : "উত্তর আসেনি, অফলাইন উত্তর ব্যবহার হলো", d.trace);
+      return d.text || getOfflineLunaResponse(prompt, personality);
+    }
     const response = await fetch(apiUrl("/api/gemini/response"), {
       method: "POST",
       headers: {
@@ -69,6 +83,20 @@ export async function getLunaAudio(
 
   // One retry: the server-side TTS engines occasionally fail on a single attempt, and
   // without a retry Luna would show the message but stay silent (or use a different voice).
+  if (isNativeApp()) {
+    const startedAt = performance.now();
+    const d = await directAudio(text, voice || "maya-leda", personality || "sweet", getApiKeys(), getModelPref("tts") || undefined, getOkModels("tts"));
+    recordFromTrace(d.trace);
+    const ms = Math.round(performance.now() - startedAt);
+    if (d.audioBase64) {
+      lastAudioEngine = d.engine;
+      addLog("ok", `ভয়েস: ${d.engine} · ${ms}ms`, [`অনুরোধ করা ভয়েস: ${voice || "default"}`, `ব্যবহৃত ভয়েস: ${d.voiceUsed}`, ...d.trace]);
+      return d.audioBase64;
+    }
+    addLog("warn", `ক্লাউড ভয়েস তৈরি হয়নি · ${ms}ms, ফোনের ভয়েস ব্যবহার হবে`, [`অনুরোধ করা ভয়েস: ${voice || "default"}`, ...d.trace]);
+    return null;
+  }
+
   for (let attempt = 0; attempt < 2; attempt++) {
     const controller = new AbortController();
     const startedAt = performance.now();
