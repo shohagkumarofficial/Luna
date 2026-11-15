@@ -12,6 +12,10 @@ interface Props {
   onSaveTurn?: (user: string, luna: string) => void;
 }
 
+const getMode = (): string => {
+  try { return localStorage.getItem("luna_personality_choice") || "sweet"; } catch { return "sweet"; }
+};
+
 const DEFAULT_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-09-2025";
 const VOICE_KEY = "luna_live_voice";
 const VOICES = ["Leda", "Kore", "Aoede", "Zephyr", "Puck", "Achernar", "Laomedeia", "Callirrhoe"];
@@ -99,7 +103,7 @@ export const LiveModePanel: React.FC<Props> = ({ isOpen, onClose, onOpenLab, onS
         }
         setError(msg);
       },
-    }, context);
+    }, context, getMode());
     clientRef.current = client;
     await client.start();
   };

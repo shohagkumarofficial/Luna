@@ -1,6 +1,6 @@
 // Direct mode (used by the Android app): the app talks to Google itself, so no Luna server is needed.
 // Same behaviour as the server: best model first, then the same model on the next key, then weaker models.
-import { buildSystemInstruction, geminiVoiceProfiles } from "../../shared/lunaShared";
+import { buildSystemInstruction, geminiVoiceProfiles, styleFor } from "../../shared/lunaShared";
 
 const BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -210,7 +210,7 @@ export async function directAudio(
   // better than falling back to the robotic device voice when the 2.5 quota is used up.
   const standIn = profile.only25 ? ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"] : [];
   const models = Array.from(new Set([...(preferred && usable(preferred) ? [preferred] : []), ...okModels.filter(usable), ...defaults, ...standIn]));
-  const style = profile.styleByPersonality[personality] || profile.styleByPersonality.sweet;
+  const style = styleFor(profile, personality);
 
   let attempted = 0;
   for (let pass = 0; pass < 2; pass++) {

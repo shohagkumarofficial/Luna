@@ -1,5 +1,6 @@
 import React, { useRef, useState } from "react";
 import { getUsage } from "../utils/keyUsage";
+import { MODES, MODE_CATEGORIES, type ModeCategory, type ModeId } from "../../shared/modes";
 import { Sparkles, Volume2, Check, X, RefreshCw, Heart, Smile, Gauge, RotateCcw, Palette, Languages, KeyRound, Eye, EyeOff } from "lucide-react";
 import { getLunaAudio, lastAudioEngine } from "../services/geminiService";
 import { playPCM } from "../utils/audioUtils";
@@ -11,7 +12,7 @@ import {
   DEFAULT_ELEVEN_VOICE, DEFAULT_ELEVEN_MODEL,
 } from "../utils/apiKey";
 
-export type PersonalityId = "sweet" | "witty" | "empathetic" | "sassy";
+export type PersonalityId = ModeId;
 export type SpeechLangCode = "bn-BD" | "en-US";
 
 export const SPEECH_LANGUAGE_OPTIONS: {
@@ -39,42 +40,22 @@ export const SPEECH_LANGUAGE_OPTIONS: {
 
 export interface PersonalityOption {
   id: PersonalityId;
+  category: ModeCategory;
   name: string;
   subtitle: string;
   description: string;
   emoji: string;
 }
 
-export const PERSONALITIES: PersonalityOption[] = [
-  {
-    id: "witty",
-    name: "Witty (রসিক)",
-    subtitle: "বুদ্ধিদীপ্ত ও মজার",
-    description: "চটপটে রসিকতা, মিষ্টি খোঁচা আর মজার কথায় হাসিয়ে তুলবে",
-    emoji: "😄",
-  },
-  {
-    id: "empathetic",
-    name: "Empathetic (মায়াবী)",
-    subtitle: "যত্নশীল ও আবেগি",
-    description: "মন দিয়ে কথা শুনবে, নরম ও আদুরে কণ্ঠে মানসিক সাহস দেবে",
-    emoji: "💗",
-  },
-  {
-    id: "sassy",
-    name: "Sassy (দুষ্টু অভিমানী)",
-    subtitle: "বোল্ড ও খুনসুটি",
-    description: "মিষ্টি অভিমান, নখরা আর বোল্ড দুষ্টুমি ভরা স্টাইল",
-    emoji: "😏",
-  },
-  {
-    id: "sweet",
-    name: "Sweet (মিষ্টি ও চঞ্চল)",
-    subtitle: "সহজ ও প্রাণবন্ত",
-    description: "সবসময়ের কিউট, হাসিখুশি ও আন্তরিক গার্লফ্রেন্ড ভাব",
-    emoji: "🌸",
-  },
-];
+// Defined once in shared/modes.ts (the server and Live mode use the same list)
+export const PERSONALITIES: PersonalityOption[] = MODES.map((m) => ({
+  id: m.id,
+  category: m.category,
+  name: m.name,
+  subtitle: m.subtitle,
+  description: m.description,
+  emoji: m.emoji,
+}));
 
 export interface VoiceOption {
   id: string;
@@ -518,42 +499,52 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {PERSONALITIES.map((p) => {
-                const isSelected = selectedPersonality === p.id;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => onSelectPersonality(p.id)}
-                    className={`p-3 rounded-2xl border text-left transition-all flex items-start gap-2.5 ${
-                      isSelected
-                        ? t.selectedCard
-                        : `bg-white/5 border-white/10 ${t.hoverCard}`
-                    }`}
-                  >
-                    <span className="text-xl select-none leading-none mt-0.5">{p.emoji}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="font-medium text-xs sm:text-sm text-white truncate">
-                          {p.name}
-                        </span>
-                        {isSelected && (
-                          <span className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 ${t.checkActive}`}>
-                            <Check size={10} strokeWidth={3} />
-                          </span>
-                        )}
-                      </div>
-                      <span className={`block text-[10px] font-mono mt-0.5 ${t.brandSubtitle}`}>
-                        {p.subtitle}
-                      </span>
-                      <p className="text-[11px] text-white/60 mt-1 leading-snug line-clamp-2">
-                        {p.description}
-                      </p>
-                    </div>
-                  </button>
-                );
-              })}
+            <div className="space-y-4">
+              {MODE_CATEGORIES.map((cat) => (
+                <div key={cat.id}>
+                  <div className="flex items-baseline gap-2 mb-1.5">
+                    <span className="text-xs font-semibold text-white/90">{cat.title}</span>
+                    <span className="text-[10px] text-white/40">{cat.hint}</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {PERSONALITIES.filter((p) => p.category === cat.id).map((p) => {
+                      const isSelected = selectedPersonality === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => onSelectPersonality(p.id)}
+                          className={`p-3 rounded-2xl border text-left transition-all flex items-start gap-2.5 ${
+                            isSelected
+                              ? t.selectedCard
+                              : `bg-white/5 border-white/10 ${t.hoverCard}`
+                          }`}
+                        >
+                          <span className="text-xl select-none leading-none mt-0.5">{p.emoji}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="font-medium text-xs sm:text-sm text-white truncate">
+                                {p.name}
+                              </span>
+                              {isSelected && (
+                                <span className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 ${t.checkActive}`}>
+                                  <Check size={10} strokeWidth={3} />
+                                </span>
+                              )}
+                            </div>
+                            <span className={`block text-[10px] font-mono mt-0.5 ${t.brandSubtitle}`}>
+                              {p.subtitle}
+                            </span>
+                            <p className="text-[11px] text-white/60 mt-1 leading-snug line-clamp-2">
+                              {p.description}
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 

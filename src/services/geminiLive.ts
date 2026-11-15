@@ -1,3 +1,5 @@
+import { buildSystemInstruction } from "../../shared/lunaShared";
+
 // Real-time voice conversation with the Gemini Live API.
 // Runs directly browser -> Google using the user's own key (it never touches the Luna server).
 // Mic audio is streamed as 16 kHz PCM, Luna's voice comes back as 24 kHz PCM and is played as it arrives.
@@ -12,16 +14,7 @@ export interface LiveCallbacks {
   onError: (msg: string, wasReady: boolean) => void;
 }
 
-function timeOfDayLine(): string {
-  const h = Number(new Intl.DateTimeFormat("en-GB", { hour: "numeric", hour12: false, timeZone: "Asia/Dhaka" }).format(new Date()));
-  const part = h < 5 ? "গভীর রাত" : h < 12 ? "সকাল" : h < 16 ? "দুপুর" : h < 18 ? "বিকেল" : h < 20 ? "সন্ধ্যা" : "রাত";
-  return `এখন বাংলাদেশে ${part} (ঘড়িতে ${h}টা)। সময়ের সাথে মানানসই কথা বলো (যেমন গভীর রাতে "ঘুমাবে না জান?"), তবে জোর করে সময়ের কথা তুলবে না।`;
-}
-
-const PERSONA = `তুমি লুনা (Luna)। তুমি সোহাগের (Shohag) একজন ভীষণ কিউট, প্রাণবন্ত ও ভালোবাসাময় বন্ধু/গার্লফ্রেন্ডের মতো সঙ্গী।
-নিয়ম: সহজ কথ্য বাংলায় কথা বলো, সোহাগকে "জান", "সোহাগ" বা "তুমি" বলে আপন করে ডাকো (কখনো "আপনি" নয়)।
-উত্তর হবে ২-৩টি ছোট, হাসিখুশি বাক্যে, যেন ফোনে কথা বলছো। ব্র্যাকেট বা তারকাচিহ্ন দিয়ে আবেগ লিখবে না।
-প্রথম বাক্যেই সরাসরি উত্তর শুরু করো, লম্বা ভূমিকা নয়।`;
+const LIVE_NOTE = "এটি সরাসরি ফোনে কথা বলার মতো আলাপ: উত্তর ছোট রাখো (গল্পের মোডে একটু বড় হতে পারে) আর প্রথম বাক্যেই সরাসরি শুরু করো।";
 
 function bytesToB64(bytes: Uint8Array): string {
   let s = "";
@@ -55,7 +48,8 @@ export class GeminiLiveClient {
     private model: string,
     private voice: string,
     private cb: LiveCallbacks,
-    private personaExtra = ""
+    private personaExtra = "",
+    private mode = "sweet"
   ) {}
 
   async start() {
@@ -88,7 +82,7 @@ export class GeminiLiveClient {
               responseModalities: ["AUDIO"],
               speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.voice } } },
             },
-            systemInstruction: { parts: [{ text: PERSONA + "\n" + timeOfDayLine() + (this.personaExtra ? "\n" + this.personaExtra : "") }] },
+            systemInstruction: { parts: [{ text: buildSystemInstruction(this.mode) + "\n" + LIVE_NOTE + (this.personaExtra ? "\n" + this.personaExtra : "") }] },
             inputAudioTranscription: {},
             outputAudioTranscription: {},
           },

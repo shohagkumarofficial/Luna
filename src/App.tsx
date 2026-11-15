@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Mic, MicOff, Loader2, Volume2, VolumeX, Keyboard, Send, Trash2, Image as ImageIcon, Smartphone, MessageSquare, X, Sparkles, Heart, Flame, Smile, ScrollText, FlaskConical, Radio } from "lucide-react";
+import { Mic, MicOff, Loader2, Volume2, VolumeX, Keyboard, Send, Trash2, Image as ImageIcon, Smartphone, MessageSquare, X, Sparkles, Heart, Flame, Smile, Briefcase, ClipboardList, GraduationCap, Target, Users, BookOpen, Languages, Moon, ScrollText, FlaskConical, Radio } from "lucide-react";
 import { getLunaResponse, getLunaAudio, resetLunaSession } from "./services/geminiService";
 import { processCommand } from "./services/commandService";
 import { LiveSessionManager } from "./services/liveService";
 import { isNativeApp } from "./utils/platform";
+import { isModeId } from "../shared/modes";
 import Visualizer from "./components/Visualizer";
 import PermissionModal from "./components/PermissionModal";
 import { APKModal } from "./components/APKModal";
@@ -79,6 +80,70 @@ const MOOD_BADGES: Record<
     cardAccent: "ring-1 ring-fuchsia-400/20",
     Icon: Smile,
   },
+  boss: {
+    label: "Boss",
+    bnLabel: "বস",
+    emoji: "👔",
+    badgeClass: "bg-slate-500/15 text-slate-200 border-slate-400/45 shadow-[0_0_12px_rgba(148,163,184,0.22)]",
+    cardAccent: "ring-1 ring-slate-400/20",
+    Icon: Briefcase,
+  },
+  secretary: {
+    label: "Secretary",
+    bnLabel: "সেক্রেটারি",
+    emoji: "📋",
+    badgeClass: "bg-sky-500/15 text-sky-200 border-sky-400/45 shadow-[0_0_12px_rgba(56,189,248,0.22)]",
+    cardAccent: "ring-1 ring-sky-400/20",
+    Icon: ClipboardList,
+  },
+  tutor: {
+    label: "Tutor",
+    bnLabel: "শিক্ষক",
+    emoji: "🎓",
+    badgeClass: "bg-indigo-500/15 text-indigo-200 border-indigo-400/45 shadow-[0_0_12px_rgba(129,140,248,0.22)]",
+    cardAccent: "ring-1 ring-indigo-400/20",
+    Icon: GraduationCap,
+  },
+  coach: {
+    label: "Coach",
+    bnLabel: "কোচ",
+    emoji: "🎯",
+    badgeClass: "bg-orange-500/15 text-orange-200 border-orange-400/45 shadow-[0_0_12px_rgba(249,115,22,0.22)]",
+    cardAccent: "ring-1 ring-orange-400/20",
+    Icon: Target,
+  },
+  friend: {
+    label: "Friend",
+    bnLabel: "দোস্ত",
+    emoji: "🤝",
+    badgeClass: "bg-emerald-500/15 text-emerald-200 border-emerald-400/45 shadow-[0_0_12px_rgba(52,211,153,0.22)]",
+    cardAccent: "ring-1 ring-emerald-400/20",
+    Icon: Users,
+  },
+  storyteller: {
+    label: "Storyteller",
+    bnLabel: "গল্পকার",
+    emoji: "📖",
+    badgeClass: "bg-violet-500/15 text-violet-200 border-violet-400/45 shadow-[0_0_12px_rgba(167,139,250,0.22)]",
+    cardAccent: "ring-1 ring-violet-400/20",
+    Icon: BookOpen,
+  },
+  english: {
+    label: "English",
+    bnLabel: "ইংরেজি",
+    emoji: "🗣️",
+    badgeClass: "bg-teal-500/15 text-teal-200 border-teal-400/45 shadow-[0_0_12px_rgba(45,212,191,0.22)]",
+    cardAccent: "ring-1 ring-teal-400/20",
+    Icon: Languages,
+  },
+  calm: {
+    label: "Calm",
+    bnLabel: "শান্ত",
+    emoji: "🌙",
+    badgeClass: "bg-blue-500/15 text-blue-200 border-blue-400/45 shadow-[0_0_12px_rgba(96,165,250,0.22)]",
+    cardAccent: "ring-1 ring-blue-400/20",
+    Icon: Moon,
+  },
 };
 
 // Splits a reply into 1-3 speakable chunks at sentence ends (Bengali danda, ., !, ?).
@@ -150,9 +215,7 @@ export default function App() {
 
   const [selectedPersonality, setSelectedPersonality] = useState<PersonalityId>(() => {
     const saved = localStorage.getItem("luna_personality_choice");
-    if (saved === "witty" || saved === "empathetic" || saved === "sassy" || saved === "sweet") {
-      return saved;
-    }
+    if (isModeId(saved)) return saved;
     return "sweet";
   });
   const selectedPersonalityRef = useRef<PersonalityId>(selectedPersonality);

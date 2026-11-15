@@ -1,5 +1,5 @@
 import express from "express";
-import { buildSystemInstruction, geminiVoiceProfiles, type VoiceProfile } from "./shared/lunaShared";
+import { buildSystemInstruction, geminiVoiceProfiles, styleFor, type VoiceProfile } from "./shared/lunaShared";
 import fs from "fs";
 import { createHash } from "crypto";
 import http from "http";
@@ -484,7 +484,7 @@ async function generateLunaAudio(
 
     const now = Date.now();
     const styleCue =
-      geminiProfile.styleByPersonality[_personality] || geminiProfile.styleByPersonality.sweet;
+      styleFor(geminiProfile, _personality);
 
     for (const ttsModel of geminiTtsModels) {
      for (let ki = 0; ki < ttsKeys.length; ki++) {

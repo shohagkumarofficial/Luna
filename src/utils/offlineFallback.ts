@@ -1,3 +1,4 @@
+import { isCompanionMode } from "../../shared/modes";
 // Offline Fallback Library: provides local Bengali/English responses and
 // zero-dependency Web Audio speech-cadence synthesis when there is no internet connection.
 
@@ -140,6 +141,11 @@ function getLocalDateBn(): string {
 
 export function getOfflineLunaResponse(prompt: string, personality = "sweet"): string {
   const q = prompt.trim().toLowerCase();
+
+  // Work/fun modes: keep a neutral tone offline (the companion replies below use pet names)
+  if (!isCompanionMode(personality)) {
+    return "সোহাগ, এখন ইন্টারনেট সংযোগ নেই, তাই আমি পুরোপুরি সাহায্য করতে পারছি না। সংযোগ ফিরলে আবার কথা বলি।";
+  }
 
   // Offline live-session prompt
   if (q === "__offline_session__") {
