@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { X, Mic, MicOff, Radio } from "lucide-react";
 import { getApiKeys } from "../utils/apiKey";
 import { getModelPref } from "../utils/modelPrefs";
+import { phoneActionsAvailable, LIVE_TOOLS, LIVE_TOOLS_NOTE, runLiveTool } from "../utils/phoneActions";
 import { addLog } from "../utils/voiceLog";
 import { GeminiLiveClient, LiveState } from "../services/geminiLive";
 
@@ -103,7 +104,12 @@ export const LiveModePanel: React.FC<Props> = ({ isOpen, onClose, onOpenLab, onS
         }
         setError(msg);
       },
-    }, context, getMode());
+      onToolCall: async (name, args) => {
+        const result = await runLiveTool(name, args);
+        addLog(result.status === "error" || result.status === "not_found" ? "warn" : "ok", `ফোন কাজ: ${name}`, [JSON.stringify(args).slice(0, 120), JSON.stringify(result).slice(0, 160)]);
+        return result;
+      },
+    }, context, getMode(), phoneActionsAvailable() ? LIVE_TOOLS : null, LIVE_TOOLS_NOTE);
     clientRef.current = client;
     await client.start();
   };

@@ -12,6 +12,7 @@ export interface LiveCallbacks {
   onLunaText: (text: string) => void; // growing transcript of Luna's reply
   onTurnEnd: () => void;
   onError: (msg: string, wasReady: boolean) => void;
+  onToolCall?: (name: string, args: any) => Promise<Record<string, unknown>>;
 }
 
 const LIVE_NOTE = "এটি সরাসরি ফোনে কথা বলার মতো আলাপ: উত্তর ছোট রাখো (গল্পের মোডে একটু বড় হতে পারে) আর প্রথম বাক্যেই সরাসরি শুরু করো।";
@@ -49,7 +50,9 @@ export class GeminiLiveClient {
     private voice: string,
     private cb: LiveCallbacks,
     private personaExtra = "",
-    private mode = "sweet"
+    private mode = "sweet",
+    private tools: unknown[] | null = null,
+    private toolsNote = ""
   ) {}
 
   async start() {
@@ -82,7 +85,8 @@ export class GeminiLiveClient {
               responseModalities: ["AUDIO"],
               speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.voice } } },
             },
-            systemInstruction: { parts: [{ text: buildSystemInstruction(this.mode) + "\n" + LIVE_NOTE + (this.personaExtra ? "\n" + this.personaExtra : "") }] },
+            systemInstruction: { parts: [{ text: buildSystemInstruction(this.mode) + "\n" + LIVE_NOTE + (this.tools ? "\n" + this.toolsNote : "") + (this.personaExtra ? "\n" + this.personaExtra : "") }] },
+            ...(this.tools ? { tools: this.tools } : {}),
             inputAudioTranscription: {},
             outputAudioTranscription: {},
           },
@@ -115,6 +119,15 @@ export class GeminiLiveClient {
       this.ready = true;
       this.startMic();
       this.cb.onState("listening");
+      return;
+    }
+    if (m.toolCall?.functionCalls && this.cb.onToolCall) {
+      const responses: any[] = [];
+      for (const fc of m.toolCall.functionCalls) {
+        const result = await this.cb.onToolCall(fc.name, fc.args || {});
+        responses.push({ id: fc.id, name: fc.name, response: result });
+      }
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ toolResponse: { functionResponses: responses } }));
       return;
     }
     const sc = m.serverContent;
