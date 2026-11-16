@@ -8,6 +8,7 @@ interface LunaPhonePlugin {
   openApp(o: { name: string }): Promise<{ opened: boolean; app?: string; reason?: string; matches?: number }>;
   findContact(o: { name: string }): Promise<{ permission: string; contacts: { name: string; number: string }[] }>;
   dial(o: { number: string }): Promise<{ opened: boolean }>;
+  openUrl(o: { url: string }): Promise<{ opened: boolean }>;
   compose(o: { number: string; text: string; via: "sms" | "whatsapp" }): Promise<{ opened: boolean }>;
 }
 
@@ -61,9 +62,36 @@ export async function draftMessage(name: string, text: string, via: "sms" | "wha
 }
 
 // Tools offered to the Live model
+const SEARCH_URLS: Record<string, (q: string) => string> = {
+  youtube: (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`,
+  google: (q) => `https://www.google.com/search?q=${encodeURIComponent(q)}`,
+  maps: (q) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`,
+  playstore: (q) => `https://play.google.com/store/search?q=${encodeURIComponent(q)}&c=apps`,
+};
+
+async function searchOnline(where: string, query: string) {
+  const w = where.toLowerCase().replace(/\s+/g, "");
+  const key = /(you|ইউটিউ|ইউটিউব)/.test(w) ? "youtube" : /(map|ম্যাপ)/.test(w) ? "maps" : /(play|প্লে)/.test(w) ? "playstore" : "google";
+  if (!query.trim()) return { status: "error", message: "কী সার্চ করবো বলা হয়নি" };
+  const r = await Phone.openUrl({ url: SEARCH_URLS[key](query.trim()) });
+  return r.opened ? { status: "ok", where: key, query } : { status: "error", message: "খুলতে পারিনি" };
+}
+
 export const LIVE_TOOLS = [
   {
     functionDeclarations: [
+      {
+        name: "search_online",
+        description: "YouTube, Google, Google Maps বা Play Store-এ কিছু সার্চ করে ফোনে ফলাফল খুলে দেয় (YouTube অ্যাপ থাকলে সেখানেই খোলে)।",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            where: { type: "STRING", description: "youtube, google, maps অথবা playstore" },
+            query: { type: "STRING", description: "কী সার্চ করবে" },
+          },
+          required: ["where", "query"],
+        },
+      },
       {
         name: "open_app",
         description: "ফোনে ইনস্টল করা একটি অ্যাপ নাম ধরে খোলে (যেমন YouTube, WhatsApp)।",
@@ -92,10 +120,11 @@ export const LIVE_TOOLS = [
 ];
 
 export const LIVE_TOOLS_NOTE =
-  "তুমি ফোনে অ্যাপ খুলতে, কন্টাক্টের জন্য ডায়ালার খুলতে আর মেসেজ ড্রাফট করতে পারো (ফাংশন ব্যবহার করে)। কল বা মেসেজ তুমি নিজে করো না, ব্যবহারকারী নিজে বোতাম চাপেন, তাই কী করলে সংক্ষেপে বলে দাও। কন্টাক্ট না মিললে বা একাধিক মিললে ব্যবহারকারীকে জিজ্ঞেস করো। মেসেজ ড্রাফটের আগে মূল কথাটা নিশ্চিত করে নাও।";
+  "তুমি ফোনে অ্যাপ খুলতে, YouTube/Google/Maps/Play Store-এ সার্চ করতে (search_online), কন্টাক্টের জন্য ডায়ালার খুলতে আর মেসেজ ড্রাফট করতে পারো (ফাংশন ব্যবহার করে)। কল বা মেসেজ তুমি নিজে করো না, ব্যবহারকারী নিজে বোতাম চাপেন, তাই কী করলে সংক্ষেপে বলে দাও। কন্টাক্ট না মিললে বা একাধিক মিললে ব্যবহারকারীকে জিজ্ঞেস করো। মেসেজ ড্রাফটের আগে মূল কথাটা নিশ্চিত করে নাও।";
 
 export async function runLiveTool(name: string, args: any): Promise<Record<string, unknown>> {
   try {
+    if (name === "search_online") return await searchOnline(String(args?.where || "google"), String(args?.query || ""));
     if (name === "open_app") return await openAppByName(String(args?.app_name || ""));
     if (name === "call_contact") return await callContact(String(args?.contact_name || ""));
     if (name === "draft_message") {

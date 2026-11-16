@@ -89,6 +89,27 @@ public class LunaPhonePlugin extends Plugin {
         call.resolve(ret);
     }
 
+    // ---------- Open a link (YouTube/Maps/Play links open in their own app when installed) ----------
+    @PluginMethod
+    public void openUrl(PluginCall call) {
+        String url = call.getString("url", "");
+        if (url == null || !(url.startsWith("https://") || url.startsWith("market://"))) {
+            call.reject("bad url");
+            return;
+        }
+        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            getContext().startActivity(i);
+        } catch (Exception e) {
+            call.reject("cannot open");
+            return;
+        }
+        JSObject ret = new JSObject();
+        ret.put("opened", true);
+        call.resolve(ret);
+    }
+
     // ---------- Contacts ----------
     @PluginMethod
     public void findContact(PluginCall call) {
