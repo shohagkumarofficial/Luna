@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Mic, MicOff, Loader2, Volume2, VolumeX, Keyboard, Send, Trash2, Image as ImageIcon, Smartphone, MessageSquare, X, Sparkles, Heart, Flame, Smile, Briefcase, ClipboardList, GraduationCap, Target, Users, BookOpen, Languages, Moon, ScrollText, FlaskConical, Radio } from "lucide-react";
+import { Mic, MicOff, Loader2, Volume2, VolumeX, Keyboard, Send, Trash2, Image as ImageIcon, Smartphone, MessageSquare, X, Sparkles, Heart, Flame, Smile, Briefcase, ClipboardList, GraduationCap, Target, Users, BookOpen, Languages, Moon, ScrollText, FlaskConical } from "lucide-react";
 import { getLunaResponse, getLunaAudio, resetLunaSession } from "./services/geminiService";
 import { processCommand } from "./services/commandService";
 import { LiveSessionManager } from "./services/liveService";
@@ -11,7 +11,9 @@ import { APKModal } from "./components/APKModal";
 import { VoiceSettingsModal, PersonalityId, PERSONALITIES, SpeechLangCode } from "./components/VoiceSettingsModal";
 import { VoiceLogPanel } from "./components/VoiceLogPanel";
 import { ModelLabPanel } from "./components/ModelLabPanel";
-import { LiveModePanel } from "./components/LiveModePanel";
+import { LiveCall } from "./services/liveCall";
+import { geminiVoiceProfiles } from "../shared/lunaShared";
+import { getApiKeys } from "./utils/apiKey";
 import { OfflineIndicator } from "./components/OfflineIndicator";
 import { StreamingText } from "./components/StreamingText";
 import { usePWAInstall } from "./hooks/usePWAInstall";
@@ -205,7 +207,6 @@ export default function App() {
   const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [showLogPanel, setShowLogPanel] = useState(false);
   const [showModelLab, setShowModelLab] = useState(false);
-  const [showLive, setShowLive] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState<string>(() => {
     const saved = localStorage.getItem("luna_voice_choice") || "maya-leda";
     // the old robotic Edge voices were removed
@@ -311,6 +312,8 @@ export default function App() {
   const { isInstallable, isInstalled, isAndroid, isIOS, install } = usePWAInstall();
 
   const liveSessionRef = useRef<LiveSessionManager | null>(null);
+  const liveCallRef = useRef<LiveCall | null>(null);
+  const liveTurnRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Derive last messages for live subtitle display
@@ -409,6 +412,11 @@ export default function App() {
     const userMessage = finalTranscript || (imageBase64 ? "Look at this image" : "");
     setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "user", text: userMessage }]);
     
+    // Live call running: typed text joins the same conversation
+    if (liveCallRef.current) {
+      liveCallRef.current.sendText(finalTranscript);
+      return;
+    }
     // If live session is active, send text through it
     if (isSessionActive && liveSessionRef.current) {
       if (imageBase64) {
@@ -459,16 +467,85 @@ export default function App() {
       if (liveSessionRef.current) {
         liveSessionRef.current.stop();
       }
+      liveCallRef.current?.stop();
       stopLunaSpeech();
     };
   }, []);
 
+  const upsertLive = (id: string, sender: "user" | "luna", text: string) => {
+    if (!text) return;
+    setMessages((prev) => {
+      const i = prev.findIndex((m) => m.id === id);
+      if (i === -1) return [...prev, { id, sender, text }];
+      const c = prev.slice();
+      c[i] = { ...c[i], text };
+      return c;
+    });
+  };
+
+  const stopLiveCall = () => {
+    liveCallRef.current?.stop();
+    liveCallRef.current = null;
+    setIsSessionActive(false);
+    setWakeWordActive(false);
+    setAppState("idle");
+    if (!isMutedRef.current) playSessionChime("stop");
+    triggerHaptic("sessionOff");
+  };
+
+  const startLiveCall = async () => {
+    triggerHaptic("sessionOn");
+    stopLunaSpeech();
+    voiceRunRef.current++;
+    liveTurnRef.current += 1;
+    setIsSessionActive(true);
+    setAppState("processing");
+    const vp = geminiVoiceProfiles[selectedVoiceRef.current];
+    const voice = vp?.voice25 || "Leda";
+    const turnId = () => `live-${Date.now().toString(36)}-${liveTurnRef.current}`;
+    let base = turnId();
+    const call = new LiveCall(
+      {
+        onState: (st) => {
+          if (st === "connecting") setAppState("processing");
+          else if (st === "listening") setAppState("listening");
+          else if (st === "speaking") setAppState("speaking");
+          else if (st === "closed" && liveCallRef.current === call) setAppState("idle");
+        },
+        onUserText: (t) => upsertLive(base + "-u", "user", t),
+        onLunaText: (t) => upsertLive(base + "-l", "luna", t),
+        onTurnEnd: () => { liveTurnRef.current += 1; base = turnId(); },
+        onFatal: (msg) => {
+          liveCallRef.current = null;
+          setIsSessionActive(false);
+          setAppState("idle");
+          if (/মাইক/.test(msg)) setShowPermissionModal(true);
+          else setMessages((prev) => [...prev, { id: Date.now().toString() + "-err", sender: "luna", text: `কলে সমস্যা হয়েছে: ${msg}` }]);
+        },
+      },
+      voice,
+      () => selectedPersonalityRef.current
+    );
+    liveCallRef.current = call;
+    if (!isMutedRef.current) playSessionChime("start");
+    await call.start();
+  };
+
   const toggleListening = async () => {
     unlockAudio();
-    // Android WebView has no browser speech recognition, so the app's main mic opens the Live conversation.
+    // The main button is a real call: Gemini Live handles listening, thinking and speaking in one stream.
+    if (liveCallRef.current) {
+      stopLiveCall();
+      return;
+    }
+    if (!isSessionActive && getApiKeys().length) {
+      await startLiveCall();
+      return;
+    }
     if (isNativeApp()) {
-      stopLunaSpeech();
-      setShowLive(true);
+      // The app has no server-side STT; without a key the user must add one.
+      setMessages((prev) => [...prev, { id: Date.now().toString() + "-nokey", sender: "luna", text: "আগে সেটিংস থেকে Gemini API Key যোগ করো, তাহলে আমি কলের মতো কথা বলতে পারবো।" }]);
+      setShowVoiceModal(true);
       return;
     }
     if (isSessionActive) {
@@ -635,7 +712,6 @@ export default function App() {
 
       <VoiceLogPanel isOpen={showLogPanel} onClose={() => setShowLogPanel(false)} />
       <ModelLabPanel isOpen={showModelLab} onClose={() => setShowModelLab(false)} />
-      <LiveModePanel isOpen={showLive} onClose={() => setShowLive(false)} onOpenLab={() => setShowModelLab(true)} onSaveTurn={(u, l) => setMessages((prev) => [...prev, ...(u ? [{ id: Date.now().toString() + "-lu", sender: "user" as const, text: u }] : []), ...(l ? [{ id: Date.now().toString() + "-ll", sender: "luna" as const, text: l }] : [])])} />
 
       <VoiceSettingsModal
         isOpen={showVoiceModal}
@@ -670,15 +746,6 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-1.5 min-w-0 flex-wrap justify-end">
-          {/* Live mode: real-time voice conversation */}
-          <button
-            onClick={() => { stopLunaSpeech(); setShowLive(true); }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold tracking-wide transition-all border shadow-lg active:scale-95 ${t.settingsBtn}`}
-            title="লাইভ কথোপকথন"
-          >
-            <Radio size={14} className={t.settingsIcon} />
-            <span className="hidden sm:inline">লাইভ</span>
-          </button>
           {/* Model Lab button: test and pick models */}
           <button
             onClick={() => setShowModelLab(true)}
@@ -904,7 +971,7 @@ export default function App() {
                     <StreamingText
                       text={latestLunaMessage.text}
                       messageId={latestLunaMessage.id}
-                      animateOnMount={latestLunaMessage.id !== initialLunaIdRef.current}
+                      animateOnMount={latestLunaMessage.id !== initialLunaIdRef.current && !latestLunaMessage.id.startsWith("live-")}
                       cursorColorClass={t.dialogueDot}
                     />
                   </p>

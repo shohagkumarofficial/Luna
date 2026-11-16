@@ -230,6 +230,13 @@ export class GeminiLiveClient {
     this.stop();
   }
 
+  // Typed text goes into the same live conversation.
+  sendText(text: string) {
+    try {
+      if (this.ws && this.ready) this.ws.send(JSON.stringify({ clientContent: { turns: [{ role: "user", parts: [{ text }] }], turnComplete: true } }));
+    } catch {}
+  }
+
   stop() {
     if (this.closed && !this.ws) return;
     this.closed = true;
