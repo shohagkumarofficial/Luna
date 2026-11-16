@@ -63,7 +63,8 @@ export async function directChat(
   personality: string,
   keys: string[],
   preferred?: string,
-  okModels: string[] = []
+  okModels: string[] = [],
+  phone?: { tools: unknown[]; note: string; run: (name: string, args: any) => Promise<Record<string, unknown>> }
 ): Promise<DirectChat> {
   if (!keys.length) return { text: "", model: null, trace: ["Gemini Key নেই"], noKey: true };
 
@@ -90,7 +91,7 @@ export async function directChat(
 
   const defaults = ["gemini-4-hydrogen", "gemini-2.5-flash", "gemini-3.1-flash-lite", "gemini-3.8-flash"];
   const models = Array.from(new Set([...(preferred ? [preferred] : []), ...okModels, ...defaults]));
-  const systemInstruction = { parts: [{ text: buildSystemInstruction(personality) }] };
+  const systemInstruction = { parts: [{ text: buildSystemInstruction(personality) + (phone ? "\n\n" + phone.note : "") }] };
   const trace: string[] = [];
   const deadline = Date.now() + 45000;
 
@@ -116,7 +117,24 @@ export async function directChat(
       attempted++;
       const t0 = Date.now();
       try {
-        const j = await callGemini(keys[ki], model, { contents, systemInstruction }, Math.min(20000, remaining));
+        const body: any = { contents, systemInstruction };
+        if (phone) body.tools = phone.tools;
+        let j = await callGemini(keys[ki], model, body, Math.min(20000, remaining));
+        // Phone actions: run the function Luna asked for, then let her answer with the result.
+        const calls = (j?.candidates?.[0]?.content?.parts || []).filter((p: any) => p.functionCall);
+        if (phone && calls.length) {
+          const responses: any[] = [];
+          for (const c of calls) {
+            const r = await phone.run(c.functionCall.name, c.functionCall.args || {});
+            trace.push(`ফোন কাজ: ${c.functionCall.name} → ${JSON.stringify(r).slice(0, 80)}`);
+            responses.push({ functionResponse: { name: c.functionCall.name, response: r } });
+          }
+          j = await callGemini(keys[ki], model, {
+            contents: [...contents, { role: "model", parts: j.candidates[0].content.parts }, { role: "user", parts: responses }],
+            systemInstruction,
+            tools: phone.tools,
+          }, Math.min(20000, Math.max(3000, deadline - Date.now())));
+        }
         const text = (j?.candidates?.[0]?.content?.parts || []).map((p: any) => p.text || "").join("").trim();
         if (text) {
           trace.push(`${model}${tag}: OK (${Date.now() - t0}ms)`);

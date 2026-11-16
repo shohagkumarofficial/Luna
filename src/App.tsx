@@ -430,7 +430,7 @@ export default function App() {
     setAppState("processing");
 
     // 1. Check for browser commands (only if no image)
-    const commandResult = !imageBase64 ? processCommand(finalTranscript) : { isBrowserAction: false };
+    const commandResult = !imageBase64 && !isNativeApp() ? processCommand(finalTranscript) : { isBrowserAction: false };
 
     let responseText = "";
 

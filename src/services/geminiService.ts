@@ -6,6 +6,7 @@ import { isNativeApp } from "../utils/platform";
 import { directChat, directAudio } from "./directGemini";
 import { getModelPref, getOkModels } from "../utils/modelPrefs";
 import { addLog } from "../utils/voiceLog";
+import { phoneActionsAvailable, LIVE_TOOLS, LIVE_TOOLS_NOTE, runLiveTool } from "../utils/phoneActions";
 
 export function resetLunaSession() {
   if (typeof navigator !== "undefined" && !navigator.onLine) return;
@@ -26,7 +27,8 @@ export async function getLunaResponse(
   try {
     // Android app: talk to Google directly (no Luna server needed)
     if (isNativeApp()) {
-      const d = await directChat(prompt, history, imageBase64, personality, getApiKeys(), getModelPref("text") || undefined, getOkModels("text"));
+      const d = await directChat(prompt, history, imageBase64, personality, getApiKeys(), getModelPref("text") || undefined, getOkModels("text"),
+        phoneActionsAvailable() && !imageBase64 ? { tools: LIVE_TOOLS, note: LIVE_TOOLS_NOTE, run: runLiveTool } : undefined);
       recordFromTrace(d.trace);
       if (d.noKey) {
         addLog("warn", "উত্তর: Gemini Key নেই", ["সেটিংস থেকে API Key যোগ করো"]);
