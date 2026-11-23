@@ -1,0 +1,78 @@
+name: MYRAA Android
+
+on:
+  push:
+    branches: [myraa-android]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: myraa-android
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test:agent
+      - run: npm run test:characters
+      - run: npm run test:physics
+      - run: npm run test:companion
+      - run: npm run test:locomotion
+      - run: npm run test:desktop-transport
+      - run: npm run test:v2
+      - run: npm run test:cognition
+      - run: npm run test:api-hub
+      - run: npm run test:screen-vision
+      - run: npm run test:real-browser
+      - run: npm run test:mobile-actions
+
+  apk:
+    name: Build APK
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - name: Build signed APK
+        run: ./scripts/build-android.sh
+      - name: Inspect APK contents
+        run: |
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          APK=$(ls artifacts/android/*.apk)
+          "$BT/aapt2" dump permissions "$APK"
+          unzip -l "$APK" | grep -E "classes.dex|mobile.html|personality.txt|AndroidManifest" 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MYRAA-Mobile-apk
+          path: artifacts/android/*.apk
+          if-no-files-found: error
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=myraa-android-latest
+          APK=$(ls artifacts/android/*.apk)
+          cp "$APK" artifacts/android/MYRAA-test.apk
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" artifacts/android/MYRAA-test.apk --target "$GITHUB_SHA" --prerelease \
+            --title "MYRAA Android (build ${GITHUB_SHA::7})" \
+            --notes "Private test build of MYRAA Mobile RC5, built from the myraa-android branch. Signed with the debug key. No character model included unless added to the build."
