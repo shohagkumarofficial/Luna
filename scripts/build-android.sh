@@ -39,6 +39,7 @@ step() { printf '\n==> %s\n' "$*"; }
 step "Launcher icon (neutral mark, only if artwork is absent)"
 mkdir -p build
 if [ ! -f build/icon.png ]; then
+  python3 -c "import PIL" 2>/dev/null || python3 -m pip install --quiet --user --break-system-packages pillow
   python3 - <<'PY'
 from PIL import Image, ImageDraw, ImageFont
 img = Image.new("RGB", (256, 256), (15, 22, 27))
