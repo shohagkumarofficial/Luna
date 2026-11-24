@@ -52,7 +52,7 @@ function coolFor(status: any): number {
   return status === "timeout" ? 2 * 60000
     : status === 403 || status === 404 ? 10 * 60000
     : status === 429 ? 30000
-    : typeof status === "number" && status >= 500 ? 60000
+    : typeof status === "number" && status >= 500 ? 0 // overload is brief: retried with backoff instead of resting
     : 0;
 }
 
@@ -89,17 +89,26 @@ export async function directChat(
     contents.push({ role: "user", parts: userParts });
   }
 
-  const defaults = ["gemini-4-hydrogen", "gemini-2.5-flash", "gemini-3.1-flash-lite", "gemini-3.8-flash"];
+  const defaults = ["gemini-4-hydrogen", "gemini-3.1-flash-lite", "gemini-3.8-flash"]; // 2.5-flash is closed to new users (404)
   const models = Array.from(new Set([...(preferred ? [preferred] : []), ...okModels, ...defaults]));
   const systemInstruction = { parts: [{ text: buildSystemInstruction(personality) + (phone ? "\n\n" + phone.note : "") }] };
   const trace: string[] = [];
   const deadline = Date.now() + 45000;
 
   let attempted = 0;
-  outer: for (let pass = 0; pass < 2; pass++) {
-   if (pass === 1) {
-     if (attempted > 0) break;
-     trace.push("সব মডেল বিশ্রামে ছিল, তাই বিশ্রাম উপেক্ষা করে আবার চেষ্টা");
+  let ignoreCool = false;
+  let transient = false;
+  const dead = new Set<string>();
+  outer: for (let pass = 0; pass < 3; pass++) {
+   if (pass > 0) {
+     if (attempted === 0 && !ignoreCool) {
+       ignoreCool = true;
+       trace.push("সব মডেল বিশ্রামে ছিল, তাই বিশ্রাম উপেক্ষা করে আবার চেষ্টা");
+     } else if (transient) {
+       transient = false;
+       trace.push("মডেল ব্যস্ত (৫xx), একটু পরে আবার চেষ্টা");
+       await new Promise((r) => setTimeout(r, 2000 * pass));
+     } else break;
    }
    for (const model of models) {
     for (let ki = 0; ki < keys.length; ki++) {
@@ -110,7 +119,8 @@ export async function directChat(
         break outer;
       }
       const until = cooldown.get(`${kid(keys[ki])}:${model}`) || 0;
-      if (pass === 0 && until > Date.now()) {
+      if (dead.has(model)) continue;
+      if (!ignoreCool && until > Date.now()) {
         trace.push(`${model}${tag}: বাদ (বিশ্রামে)`);
         continue;
       }
@@ -143,6 +153,8 @@ export async function directChat(
         trace.push(`${model}${tag}: খালি উত্তর`);
       } catch (e: any) {
         trace.push(`${model}${tag}: ব্যর্থ (${e?.status || "error"}) ${String(e?.message || e).replace(/\s+/g, " ").slice(0, 110)}`);
+        if (e?.status === 404 || e?.status === 403) dead.add(model);
+        if (typeof e?.status === "number" && e.status >= 500) transient = true;
         const c = e?.status === 429 ? quotaCool(String(e?.message || "")) : coolFor(e?.status);
         if (c) cooldown.set(`${kid(keys[ki])}:${model}`, Date.now() + c);
       }
